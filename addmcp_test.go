@@ -100,59 +100,10 @@ func TestTransformZed(t *testing.T) {
 	assertEqual(t, agend["command"], "agend")
 }
 
+// Amazon Q uses standard mcpServers object format (verified from official schema).
 func TestTransformAmazonQInstall(t *testing.T) {
-	m := transformAmazonQInstall(map[string]any{}, testServer)
-	servers := m["mcpServers"].([]any)
-	if len(servers) != 1 {
-		t.Fatalf("expected 1, got %d", len(servers))
-	}
-	entry := servers[0].(map[string]any)
-	assertEqual(t, entry["name"], "agend")
-	assertEqual(t, entry["transport"], "stdio")
-	assertEqual(t, entry["command"], "agend")
-	assertSlice(t, entry["arguments"], []string{"mcp"})
-}
-
-func TestTransformAmazonQReplaces(t *testing.T) {
-	existing := map[string]any{
-		"mcpServers": []any{
-			map[string]any{"name": "agend", "transport": "sse"},
-			map[string]any{"name": "other", "transport": "stdio"},
-		},
-	}
-	m := transformAmazonQInstall(existing, testServer)
-	servers := m["mcpServers"].([]any)
-	if len(servers) != 2 {
-		t.Fatalf("expected 2, got %d", len(servers))
-	}
-	found := false
-	for _, s := range servers {
-		e := s.(map[string]any)
-		if e["name"] == "other" {
-			found = true
-		}
-		if e["name"] == "agend" {
-			assertEqual(t, e["transport"], "stdio")
-		}
-	}
-	if !found {
-		t.Error("other server lost")
-	}
-}
-
-func TestTransformAmazonQUninstall(t *testing.T) {
-	existing := map[string]any{
-		"mcpServers": []any{
-			map[string]any{"name": "agend"},
-			map[string]any{"name": "other"},
-		},
-	}
-	m := transformAmazonQUninstall(existing, "agend")
-	servers := m["mcpServers"].([]any)
-	if len(servers) != 1 {
-		t.Fatalf("expected 1, got %d", len(servers))
-	}
-	assertEqual(t, servers[0].(map[string]any)["name"], "other")
+	m := transformStdInstall("mcpServers")(map[string]any{}, testServer)
+	assertStdServer(t, m, "mcpServers")
 }
 
 func TestTransformGoose(t *testing.T) {
@@ -217,24 +168,7 @@ func TestTransformHTTPServer(t *testing.T) {
 	assertEqual(t, headers["Auth"], "Bearer t")
 }
 
-// --- Amazon Q HTTP + env coverage ---
-
-func TestTransformAmazonQHTTP(t *testing.T) {
-	s := Server{Name: "r", URL: "https://x.com/mcp", Headers: map[string]string{"Auth": "tok"}, Env: map[string]string{"K": "V"}}
-	m := transformAmazonQInstall(map[string]any{}, s)
-	entry := m["mcpServers"].([]any)[0].(map[string]any)
-	assertEqual(t, entry["transport"], "http")
-	assertEqual(t, entry["url"], "https://x.com/mcp")
-	assertEqual(t, entry["headers"].(map[string]string)["Auth"], "tok")
-	assertEqual(t, entry["env"].(map[string]string)["K"], "V")
-}
-
-func TestTransformAmazonQUninstallEmpty(t *testing.T) {
-	m := transformAmazonQUninstall(map[string]any{}, "agend")
-	if m == nil {
-		t.Error("should return non-nil map")
-	}
-}
+// Amazon Q HTTP + env uses standard format (covered by TestTransformHTTPServer)
 
 // --- Goose HTTP + env + nil coverage ---
 

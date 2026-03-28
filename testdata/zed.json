@@ -1,0 +1,11 @@
+{
+  "context_servers": {
+    "agend": {
+      "args": [
+        "mcp"
+      ],
+      "command": "agend",
+      "source": "custom"
+    }
+  }
+}

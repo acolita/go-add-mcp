@@ -92,57 +92,10 @@ func transformZedInstall(m map[string]any, s Server) map[string]any {
 	return m
 }
 
-// --- Amazon Q: {"mcpServers": [{"name": "...", "transport": "stdio", ...}]} ---
-
-func transformAmazonQInstall(m map[string]any, s Server) map[string]any {
-	var servers []any
-	if existing, ok := m["mcpServers"].([]any); ok {
-		for _, entry := range existing {
-			if e, ok := entry.(map[string]any); ok && e["name"] == s.Name {
-				continue
-			}
-			servers = append(servers, entry)
-		}
-	}
-
-	entry := map[string]any{"name": s.Name}
-	if s.IsHTTP() {
-		entry["transport"] = "http"
-		entry["url"] = s.URL
-		if len(s.Headers) > 0 {
-			entry["headers"] = s.Headers
-		}
-	} else {
-		entry["transport"] = "stdio"
-		entry["command"] = s.Command
-		if len(s.Args) > 0 {
-			entry["arguments"] = s.Args // Amazon Q uses "arguments", not "args"
-		}
-	}
-	if len(s.Env) > 0 {
-		entry["env"] = s.Env
-	}
-
-	servers = append(servers, entry)
-	m["mcpServers"] = servers
-	return m
-}
-
-func transformAmazonQUninstall(m map[string]any, name string) map[string]any {
-	existing, ok := m["mcpServers"].([]any)
-	if !ok {
-		return m
-	}
-	var filtered []any
-	for _, entry := range existing {
-		if e, ok := entry.(map[string]any); ok && e["name"] == name {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	m["mcpServers"] = filtered
-	return m
-}
+// --- Amazon Q: standard mcpServers object format ---
+// Verified from aws/amazon-q-developer-cli schemas/agent-v1.json:
+// mcpServers is an object (not array), uses "args" (not "arguments"),
+// "type" field for transport defaults to "stdio".
 
 // --- Goose: YAML {"extensions": {"name": {"cmd": "...", "envs": {...}}}} ---
 

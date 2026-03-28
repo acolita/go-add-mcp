@@ -1,0 +1,8 @@
+extensions:
+    agend:
+        args:
+            - mcp
+        cmd: agend
+        enabled: true
+        name: agend
+        type: stdio

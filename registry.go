@@ -224,8 +224,8 @@ var registry = map[Agent]agentDef{
 			return d.DirExists(filepath.Join(p.HomeDir, ".aws", "amazonq")) || d.CommandExists("q")
 		},
 		format:             formatJSON,
-		installTransform:   transformAmazonQInstall,
-		uninstallTransform: transformAmazonQUninstall,
+		installTransform:   transformStdInstall("mcpServers"),
+		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
 	Codex: {

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "agend": {
+      "args": [
+        "mcp"
+      ],
+      "command": "agend"
+    }
+  }
+}

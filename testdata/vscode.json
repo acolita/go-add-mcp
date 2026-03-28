@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "agend": {
+      "args": [
+        "mcp"
+      ],
+      "command": "agend",
+      "type": "stdio"
+    }
+  }
+}
