@@ -626,6 +626,32 @@ func TestUninstallContinueMemFS(t *testing.T) {
 	}
 }
 
+func TestResolve(t *testing.T) {
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a", WorkingDir: "/proj"}
+	results := resolveWith(plat, []Agent{ClaudeCode, Cursor, VSCode})
+	// ClaudeCode and Cursor have global paths; VSCode does not
+	paths := map[Agent]string{}
+	for _, r := range results {
+		if r.OK() {
+			paths[r.Agent] = r.Path
+		}
+	}
+	assertEqual(t, paths[ClaudeCode], filepath.Join("/home/a", ".claude.json"))
+	assertEqual(t, paths[Cursor], filepath.Join("/home/a", ".cursor", "mcp.json"))
+	if _, ok := paths[VSCode]; ok {
+		t.Error("VS Code should have no global path")
+	}
+}
+
+func TestResolveProject(t *testing.T) {
+	plat := Platform{GOOS: "linux", WorkingDir: "/proj"}
+	results := resolveWith(plat, []Agent{VSCode}, WithScope(Project))
+	if len(results) != 1 || !results[0].OK() {
+		t.Fatalf("expected 1 OK result, got %+v", results)
+	}
+	assertEqual(t, results[0].Path, filepath.Join("/proj", ".vscode", "mcp.json"))
+}
+
 func TestInstallUnknownAgent(t *testing.T) {
 	fsys := newMemFS()
 	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}

@@ -95,6 +95,12 @@ func Detect() []Agent {
 	return detectWith(realDetector{}, DefaultPlatform())
 }
 
+// Resolve returns the config file paths that would be written for each agent,
+// without modifying any files. Useful for dry-run previews.
+func Resolve(agents []Agent, opts ...Option) []Result {
+	return resolveWith(DefaultPlatform(), agents, opts...)
+}
+
 // Agents returns all supported agent identifiers in a stable order.
 func Agents() []Agent {
 	out := make([]Agent, len(allAgents))
@@ -169,6 +175,30 @@ func detectWith(det Detector, plat Platform) []Agent {
 		}
 	}
 	return found
+}
+
+func resolveWith(plat Platform, agents []Agent, opts ...Option) []Result {
+	o := applyOpts(opts)
+	results := make([]Result, 0, len(agents))
+	for _, agent := range agents {
+		def, ok := registry[agent]
+		if !ok {
+			results = append(results, Result{Agent: agent, Err: fmt.Errorf("unknown agent: %s", agent)})
+			continue
+		}
+		paths := def.paths(plat, o)
+		if len(paths) == 0 {
+			results = append(results, Result{
+				Agent: agent,
+				Err:   fmt.Errorf("no config path for %s on %s (scope: %v)", agent, plat.GOOS, scopeName(o.scope)),
+			})
+			continue
+		}
+		for _, path := range paths {
+			results = append(results, Result{Agent: agent, Path: path})
+		}
+	}
+	return results
 }
 
 func applyOpts(opts []Option) *options {
