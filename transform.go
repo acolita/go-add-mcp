@@ -1,42 +1,9 @@
 package addmcp
 
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-)
+import "strings"
 
-// --- JSON file I/O ---
-
-func readJSONFile(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return make(map[string]any), nil
-		}
-		return nil, err
-	}
-	cleaned := stripJSONC(data)
-	var m map[string]any
-	if err := json.Unmarshal(cleaned, &m); err != nil {
-		return nil, fmt.Errorf("%s: malformed JSON: %w", path, err)
-	}
-	return m, nil
-}
-
-func writeJSONFile(path string, data map[string]any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	out, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
-	}
-	out = append(out, '\n')
-	return os.WriteFile(path, out, 0644)
-}
+// This file contains ALL pure functions: no filesystem, no env, no side effects.
+// Every function is deterministic and testable with just inputs/outputs.
 
 // --- Server config builders ---
 
@@ -67,49 +34,35 @@ func serverConfig(s Server) map[string]any {
 }
 
 // --- Standard format: {"key": {"name": {...}}} ---
+// Used by: Claude Desktop, Claude Code, Cursor, Windsurf, JetBrains, Cline, Roo Code, Gemini
 
-func jsonStandardInstall(key string) func(string, Server) error {
-	return func(path string, s Server) error {
-		m, err := readJSONFile(path)
-		if err != nil {
-			return err
-		}
+func transformStdInstall(key string) func(map[string]any, Server) map[string]any {
+	return func(m map[string]any, s Server) map[string]any {
 		servers, _ := m[key].(map[string]any)
 		if servers == nil {
 			servers = make(map[string]any)
 		}
 		servers[s.Name] = serverConfig(s)
 		m[key] = servers
-		return writeJSONFile(path, m)
+		return m
 	}
 }
 
-func jsonStandardUninstall(key string) func(string, string) error {
-	return func(path string, name string) error {
-		m, err := readJSONFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
+func transformStdUninstall(key string) func(map[string]any, string) map[string]any {
+	return func(m map[string]any, name string) map[string]any {
 		servers, _ := m[key].(map[string]any)
 		if servers == nil {
-			return nil
+			return m
 		}
 		delete(servers, name)
 		m[key] = servers
-		return writeJSONFile(path, m)
+		return m
 	}
 }
 
 // --- VS Code: {"servers": {"name": {"type": "stdio", ...}}} ---
 
-func vscodeInstall(path string, s Server) error {
-	m, err := readJSONFile(path)
-	if err != nil {
-		return err
-	}
+func transformVSCodeInstall(m map[string]any, s Server) map[string]any {
 	servers, _ := m["servers"].(map[string]any)
 	if servers == nil {
 		servers = make(map[string]any)
@@ -122,16 +75,12 @@ func vscodeInstall(path string, s Server) error {
 	}
 	servers[s.Name] = cfg
 	m["servers"] = servers
-	return writeJSONFile(path, m)
+	return m
 }
 
 // --- Zed: {"context_servers": {"name": {"source": "custom", ...}}} ---
 
-func zedInstall(path string, s Server) error {
-	m, err := readJSONFile(path)
-	if err != nil {
-		return err
-	}
+func transformZedInstall(m map[string]any, s Server) map[string]any {
 	servers, _ := m["context_servers"].(map[string]any)
 	if servers == nil {
 		servers = make(map[string]any)
@@ -140,18 +89,12 @@ func zedInstall(path string, s Server) error {
 	cfg["source"] = "custom"
 	servers[s.Name] = cfg
 	m["context_servers"] = servers
-	return writeJSONFile(path, m)
+	return m
 }
 
 // --- Amazon Q: {"mcpServers": [{"name": "...", "transport": "stdio", ...}]} ---
 
-func amazonQInstall(path string, s Server) error {
-	m, err := readJSONFile(path)
-	if err != nil {
-		return err
-	}
-
-	// Collect existing entries, removing any with the same name.
+func transformAmazonQInstall(m map[string]any, s Server) map[string]any {
 	var servers []any
 	if existing, ok := m["mcpServers"].([]any); ok {
 		for _, entry := range existing {
@@ -182,20 +125,13 @@ func amazonQInstall(path string, s Server) error {
 
 	servers = append(servers, entry)
 	m["mcpServers"] = servers
-	return writeJSONFile(path, m)
+	return m
 }
 
-func amazonQUninstall(path string, name string) error {
-	m, err := readJSONFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
+func transformAmazonQUninstall(m map[string]any, name string) map[string]any {
 	existing, ok := m["mcpServers"].([]any)
 	if !ok {
-		return nil
+		return m
 	}
 	var filtered []any
 	for _, entry := range existing {
@@ -205,33 +141,96 @@ func amazonQUninstall(path string, name string) error {
 		filtered = append(filtered, entry)
 	}
 	m["mcpServers"] = filtered
-	return writeJSONFile(path, m)
+	return m
 }
 
-// --- Continue: writes individual files into mcpServers/ directory ---
+// --- Goose: YAML {"extensions": {"name": {"cmd": "...", "envs": {...}}}} ---
 
-func continueInstall(dir string, s Server) error {
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+func transformGooseInstall(m map[string]any, s Server) map[string]any {
+	extensions, _ := m["extensions"].(map[string]any)
+	if extensions == nil {
+		extensions = make(map[string]any)
 	}
-	cfg := map[string]any{
+	entry := map[string]any{
+		"name":    s.Name,
+		"enabled": true,
+		"type":    "stdio",
+	}
+	if s.IsHTTP() {
+		entry["type"] = "sse"
+		entry["uri"] = s.URL
+		if len(s.Headers) > 0 {
+			entry["headers"] = s.Headers
+		}
+	} else {
+		entry["cmd"] = s.Command
+		if len(s.Args) > 0 {
+			entry["args"] = s.Args
+		}
+	}
+	if len(s.Env) > 0 {
+		entry["envs"] = s.Env
+	}
+	extensions[s.Name] = entry
+	m["extensions"] = extensions
+	return m
+}
+
+func transformGooseUninstall(m map[string]any, name string) map[string]any {
+	extensions, _ := m["extensions"].(map[string]any)
+	if extensions == nil {
+		return m
+	}
+	delete(extensions, name)
+	m["extensions"] = extensions
+	return m
+}
+
+// --- Codex: TOML {"mcp_servers": {"name": {"command": "..."}}} ---
+
+func transformCodexInstall(m map[string]any, s Server) map[string]any {
+	servers, _ := m["mcp_servers"].(map[string]any)
+	if servers == nil {
+		servers = make(map[string]any)
+	}
+	entry := make(map[string]any)
+	if s.IsHTTP() {
+		entry["url"] = s.URL
+		if len(s.Headers) > 0 {
+			entry["http_headers"] = s.Headers
+		}
+	} else {
+		entry["command"] = s.Command
+		if len(s.Args) > 0 {
+			entry["args"] = s.Args
+		}
+	}
+	if len(s.Env) > 0 {
+		entry["env"] = s.Env
+	}
+	servers[s.Name] = entry
+	m["mcp_servers"] = servers
+	return m
+}
+
+func transformCodexUninstall(m map[string]any, name string) map[string]any {
+	servers, _ := m["mcp_servers"].(map[string]any)
+	if servers == nil {
+		return m
+	}
+	delete(servers, name)
+	m["mcp_servers"] = servers
+	return m
+}
+
+// --- Continue: builds the individual file content ---
+
+func transformContinueInstall(_ map[string]any, s Server) map[string]any {
+	return map[string]any{
 		"mcpServers": map[string]any{
 			s.Name: serverConfig(s),
 		},
 	}
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, s.Name+".json"), append(out, '\n'), 0644)
-}
-
-func continueUninstall(dir string, name string) error {
-	err := os.Remove(filepath.Join(dir, name+".json"))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	return err
 }
 
 // --- JSONC comment stripping ---

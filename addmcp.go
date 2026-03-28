@@ -1,14 +1,13 @@
 // Package addmcp installs and removes MCP server configurations
 // across all major AI agent clients (Claude, Cursor, VS Code, etc.).
 //
+// The library separates pure config transformation logic from filesystem IO,
+// making all agent-specific format handling testable without side effects.
+//
 // Inspired by https://github.com/neondatabase/add-mcp
 package addmcp
 
-import (
-	"fmt"
-	"os/exec"
-	"runtime"
-)
+import "fmt"
 
 // Agent identifies a supported MCP client application.
 type Agent string
@@ -83,66 +82,17 @@ func WithProjectDir(dir string) Option {
 // Install adds or updates the MCP server configuration for the given agents.
 // Each agent gets its own Result; errors are per-agent, not fatal.
 func Install(server Server, agents []Agent, opts ...Option) []Result {
-	o := applyOpts(opts)
-	results := make([]Result, 0, len(agents))
-	for _, agent := range agents {
-		def, ok := registry[agent]
-		if !ok {
-			results = append(results, Result{Agent: agent, Err: fmt.Errorf("unknown agent: %s", agent)})
-			continue
-		}
-		paths := def.paths(o)
-		if len(paths) == 0 {
-			results = append(results, Result{
-				Agent: agent,
-				Err:   fmt.Errorf("no config path for %s on %s (scope: %v)", agent, runtime.GOOS, scopeName(o.scope)),
-			})
-			continue
-		}
-		for _, path := range paths {
-			err := def.install(path, server)
-			results = append(results, Result{Agent: agent, Path: path, Err: err})
-		}
-	}
-	return results
+	return installWith(osFS{}, DefaultPlatform(), server, agents, opts...)
 }
 
 // Uninstall removes the named MCP server from the given agents' configs.
 func Uninstall(serverName string, agents []Agent, opts ...Option) []Result {
-	o := applyOpts(opts)
-	results := make([]Result, 0, len(agents))
-	for _, agent := range agents {
-		def, ok := registry[agent]
-		if !ok {
-			results = append(results, Result{Agent: agent, Err: fmt.Errorf("unknown agent: %s", agent)})
-			continue
-		}
-		paths := def.paths(o)
-		if len(paths) == 0 {
-			results = append(results, Result{
-				Agent: agent,
-				Err:   fmt.Errorf("no config path for %s on %s (scope: %v)", agent, runtime.GOOS, scopeName(o.scope)),
-			})
-			continue
-		}
-		for _, path := range paths {
-			err := def.uninstall(path, serverName)
-			results = append(results, Result{Agent: agent, Path: path, Err: err})
-		}
-	}
-	return results
+	return uninstallWith(osFS{}, DefaultPlatform(), serverName, agents, opts...)
 }
 
 // Detect returns agents that appear to be installed on this system.
-// Detection checks for config directories and CLI commands in PATH.
 func Detect() []Agent {
-	var found []Agent
-	for _, a := range allAgents {
-		if def, ok := registry[a]; ok && def.detect() {
-			found = append(found, a)
-		}
-	}
-	return found
+	return detectWith(realDetector{}, DefaultPlatform())
 }
 
 // Agents returns all supported agent identifiers in a stable order.
@@ -159,6 +109,68 @@ var allAgents = []Agent{
 	AmazonQ, Codex, Goose, Continue,
 }
 
+// --- internal wiring (testable via injected FS/Platform/Detector) ---
+
+func installWith(fsys FS, plat Platform, server Server, agents []Agent, opts ...Option) []Result {
+	o := applyOpts(opts)
+	results := make([]Result, 0, len(agents))
+	for _, agent := range agents {
+		def, ok := registry[agent]
+		if !ok {
+			results = append(results, Result{Agent: agent, Err: fmt.Errorf("unknown agent: %s", agent)})
+			continue
+		}
+		paths := def.paths(plat, o)
+		if len(paths) == 0 {
+			results = append(results, Result{
+				Agent: agent,
+				Err:   fmt.Errorf("no config path for %s on %s (scope: %v)", agent, plat.GOOS, scopeName(o.scope)),
+			})
+			continue
+		}
+		for _, path := range paths {
+			err := def.doInstall(fsys, path, server)
+			results = append(results, Result{Agent: agent, Path: path, Err: err})
+		}
+	}
+	return results
+}
+
+func uninstallWith(fsys FS, plat Platform, serverName string, agents []Agent, opts ...Option) []Result {
+	o := applyOpts(opts)
+	results := make([]Result, 0, len(agents))
+	for _, agent := range agents {
+		def, ok := registry[agent]
+		if !ok {
+			results = append(results, Result{Agent: agent, Err: fmt.Errorf("unknown agent: %s", agent)})
+			continue
+		}
+		paths := def.paths(plat, o)
+		if len(paths) == 0 {
+			results = append(results, Result{
+				Agent: agent,
+				Err:   fmt.Errorf("no config path for %s on %s (scope: %v)", agent, plat.GOOS, scopeName(o.scope)),
+			})
+			continue
+		}
+		for _, path := range paths {
+			err := def.doUninstall(fsys, path, serverName)
+			results = append(results, Result{Agent: agent, Path: path, Err: err})
+		}
+	}
+	return results
+}
+
+func detectWith(det Detector, plat Platform) []Agent {
+	var found []Agent
+	for _, a := range allAgents {
+		if def, ok := registry[a]; ok && def.detect(plat, det) {
+			found = append(found, a)
+		}
+	}
+	return found
+}
+
 func applyOpts(opts []Option) *options {
 	o := &options{scope: Global}
 	for _, fn := range opts {
@@ -172,9 +184,4 @@ func scopeName(s Scope) string {
 		return "project"
 	}
 	return "global"
-}
-
-func commandExists(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
 }

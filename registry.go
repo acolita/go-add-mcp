@@ -1,304 +1,299 @@
 package addmcp
 
-import (
-	"os"
-	"path/filepath"
-	"runtime"
+import "path/filepath"
+
+// format identifies the serialization format for an agent's config file.
+type format int
+
+const (
+	formatJSON format = iota
+	formatYAML
+	formatTOML
+	formatContinueDir // directory of individual JSON files
 )
 
 // agentDef is the internal definition for an MCP client agent.
+// Path resolution and detection are pure functions over Platform/Detector.
+// Config transformation is a pure function over map data.
+// IO is handled by doInstall/doUninstall in io.go.
 type agentDef struct {
-	paths     func(o *options) []string
-	detect    func() bool
-	install   func(path string, server Server) error
-	uninstall func(path string, name string) error
+	paths              func(Platform, *options) []string
+	detect             func(Platform, Detector) bool
+	format             format
+	installTransform   func(map[string]any, Server) map[string]any
+	uninstallTransform func(map[string]any, string) map[string]any // nil for Continue
 }
 
 var registry = map[Agent]agentDef{
 	ClaudeDesktop: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return nil // Claude Desktop has no project scope
+				return nil
 			}
-			home, _ := os.UserHomeDir()
-			switch runtime.GOOS {
+			switch p.GOOS {
 			case "darwin":
-				return []string{filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")}
+				return []string{filepath.Join(p.HomeDir, "Library", "Application Support", "Claude", "claude_desktop_config.json")}
 			case "linux":
-				return []string{filepath.Join(home, ".config", "Claude", "claude_desktop_config.json")}
+				return []string{filepath.Join(p.HomeDir, ".config", "Claude", "claude_desktop_config.json")}
 			case "windows":
-				if ad := os.Getenv("APPDATA"); ad != "" {
-					return []string{filepath.Join(ad, "Claude", "claude_desktop_config.json")}
+				if p.AppData != "" {
+					return []string{filepath.Join(p.AppData, "Claude", "claude_desktop_config.json")}
 				}
 			}
 			return nil
 		},
-		detect: func() bool {
-			home, _ := os.UserHomeDir()
-			switch runtime.GOOS {
+		detect: func(p Platform, d Detector) bool {
+			switch p.GOOS {
 			case "darwin":
-				return dirExists(filepath.Join(home, "Library", "Application Support", "Claude"))
+				return d.DirExists(filepath.Join(p.HomeDir, "Library", "Application Support", "Claude"))
 			case "linux":
-				return dirExists(filepath.Join(home, ".config", "Claude"))
+				return d.DirExists(filepath.Join(p.HomeDir, ".config", "Claude"))
 			case "windows":
-				if ad := os.Getenv("APPDATA"); ad != "" {
-					return dirExists(filepath.Join(ad, "Claude"))
+				if p.AppData != "" {
+					return d.DirExists(filepath.Join(p.AppData, "Claude"))
 				}
 			}
 			return false
 		},
-		install:   jsonStandardInstall("mcpServers"),
-		uninstall: jsonStandardUninstall("mcpServers"),
+		format:             formatJSON,
+		installTransform:   transformStdInstall("mcpServers"),
+		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
 	ClaudeCode: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".mcp.json")}
+				return []string{filepath.Join(projectDir(p, o), ".mcp.json")}
 			}
-			home, _ := os.UserHomeDir()
-			return []string{filepath.Join(home, ".claude.json")}
+			return []string{filepath.Join(p.HomeDir, ".claude.json")}
 		},
-		detect: func() bool {
-			return commandExists("claude")
+		detect: func(_ Platform, d Detector) bool {
+			return d.CommandExists("claude")
 		},
-		install:   jsonStandardInstall("mcpServers"),
-		uninstall: jsonStandardUninstall("mcpServers"),
+		format:             formatJSON,
+		installTransform:   transformStdInstall("mcpServers"),
+		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
 	Cursor: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".cursor", "mcp.json")}
+				return []string{filepath.Join(projectDir(p, o), ".cursor", "mcp.json")}
 			}
-			home, _ := os.UserHomeDir()
-			return []string{filepath.Join(home, ".cursor", "mcp.json")}
+			return []string{filepath.Join(p.HomeDir, ".cursor", "mcp.json")}
 		},
-		detect: func() bool {
-			home, _ := os.UserHomeDir()
-			return dirExists(filepath.Join(home, ".cursor"))
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(filepath.Join(p.HomeDir, ".cursor"))
 		},
-		install:   jsonStandardInstall("mcpServers"),
-		uninstall: jsonStandardUninstall("mcpServers"),
+		format:             formatJSON,
+		installTransform:   transformStdInstall("mcpServers"),
+		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
 	Windsurf: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return nil // Windsurf has no documented project scope
+				return nil
 			}
-			home, _ := os.UserHomeDir()
-			return []string{filepath.Join(home, ".codeium", "windsurf", "mcp_config.json")}
+			return []string{filepath.Join(p.HomeDir, ".codeium", "windsurf", "mcp_config.json")}
 		},
-		detect: func() bool {
-			home, _ := os.UserHomeDir()
-			return dirExists(filepath.Join(home, ".codeium", "windsurf"))
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(filepath.Join(p.HomeDir, ".codeium", "windsurf"))
 		},
-		install:   jsonStandardInstall("mcpServers"),
-		uninstall: jsonStandardUninstall("mcpServers"),
+		format:             formatJSON,
+		installTransform:   transformStdInstall("mcpServers"),
+		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
 	VSCode: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".vscode", "mcp.json")}
+				return []string{filepath.Join(projectDir(p, o), ".vscode", "mcp.json")}
 			}
-			// VS Code global MCP config is managed via the "MCP: Open User Configuration"
-			// command palette action. There's no well-defined cross-platform file path
-			// for global MCP config, so we only support project scope.
-			return nil
+			return nil // global MCP config managed via Command Palette
 		},
-		detect: func() bool {
-			return commandExists("code")
+		detect: func(_ Platform, d Detector) bool {
+			return d.CommandExists("code")
 		},
-		install:   vscodeInstall,
-		uninstall: jsonStandardUninstall("servers"),
+		format:             formatJSON,
+		installTransform:   transformVSCodeInstall,
+		uninstallTransform: transformStdUninstall("servers"),
 	},
 
 	Zed: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".zed", "settings.json")}
+				return []string{filepath.Join(projectDir(p, o), ".zed", "settings.json")}
 			}
-			home, _ := os.UserHomeDir()
-			switch runtime.GOOS {
+			switch p.GOOS {
 			case "darwin", "linux":
-				return []string{filepath.Join(home, ".config", "zed", "settings.json")}
+				return []string{filepath.Join(p.HomeDir, ".config", "zed", "settings.json")}
 			case "windows":
-				if ad := os.Getenv("APPDATA"); ad != "" {
-					return []string{filepath.Join(ad, "Zed", "settings.json")}
+				if p.AppData != "" {
+					return []string{filepath.Join(p.AppData, "Zed", "settings.json")}
 				}
 			}
 			return nil
 		},
-		detect: func() bool {
-			home, _ := os.UserHomeDir()
-			return dirExists(filepath.Join(home, ".config", "zed")) || commandExists("zed")
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(filepath.Join(p.HomeDir, ".config", "zed")) || d.CommandExists("zed")
 		},
-		install:   zedInstall,
-		uninstall: jsonStandardUninstall("context_servers"),
+		format:             formatJSON,
+		installTransform:   transformZedInstall,
+		uninstallTransform: transformStdUninstall("context_servers"),
 	},
 
 	JetBrains: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".junie", "mcp", "mcp.json")}
+				return []string{filepath.Join(projectDir(p, o), ".junie", "mcp", "mcp.json")}
 			}
-			home, _ := os.UserHomeDir()
-			return []string{filepath.Join(home, ".junie", "mcp", "mcp.json")}
+			return []string{filepath.Join(p.HomeDir, ".junie", "mcp", "mcp.json")}
 		},
-		detect: func() bool {
-			home, _ := os.UserHomeDir()
-			return dirExists(filepath.Join(home, ".junie"))
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(filepath.Join(p.HomeDir, ".junie"))
 		},
-		install:   jsonStandardInstall("mcpServers"),
-		uninstall: jsonStandardUninstall("mcpServers"),
+		format:             formatJSON,
+		installTransform:   transformStdInstall("mcpServers"),
+		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
 	Cline: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return nil // Cline has no project scope
+				return nil
 			}
-			return vsCodeExtPaths("saoudrizwan.claude-dev", "cline_mcp_settings.json")
+			return vsCodeExtPaths(p, "saoudrizwan.claude-dev", "cline_mcp_settings.json")
 		},
-		detect: func() bool {
-			for _, p := range vsCodeExtPaths("saoudrizwan.claude-dev", "cline_mcp_settings.json") {
-				if dirExists(filepath.Dir(p)) {
+		detect: func(p Platform, d Detector) bool {
+			for _, path := range vsCodeExtPaths(p, "saoudrizwan.claude-dev", "cline_mcp_settings.json") {
+				if d.DirExists(filepath.Dir(path)) {
 					return true
 				}
 			}
 			return false
 		},
-		install:   jsonStandardInstall("mcpServers"),
-		uninstall: jsonStandardUninstall("mcpServers"),
+		format:             formatJSON,
+		installTransform:   transformStdInstall("mcpServers"),
+		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
 	RooCode: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".roo", "mcp.json")}
+				return []string{filepath.Join(projectDir(p, o), ".roo", "mcp.json")}
 			}
-			return vsCodeExtPaths("rooveterinaryinc.roo-cline", "mcp_settings.json")
+			return vsCodeExtPaths(p, "rooveterinaryinc.roo-cline", "mcp_settings.json")
 		},
-		detect: func() bool {
-			for _, p := range vsCodeExtPaths("rooveterinaryinc.roo-cline", "mcp_settings.json") {
-				if dirExists(filepath.Dir(p)) {
+		detect: func(p Platform, d Detector) bool {
+			for _, path := range vsCodeExtPaths(p, "rooveterinaryinc.roo-cline", "mcp_settings.json") {
+				if d.DirExists(filepath.Dir(path)) {
 					return true
 				}
 			}
 			return false
 		},
-		install:   jsonStandardInstall("mcpServers"),
-		uninstall: jsonStandardUninstall("mcpServers"),
+		format:             formatJSON,
+		installTransform:   transformStdInstall("mcpServers"),
+		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
 	Gemini: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".gemini", "settings.json")}
+				return []string{filepath.Join(projectDir(p, o), ".gemini", "settings.json")}
 			}
-			home, _ := os.UserHomeDir()
-			return []string{filepath.Join(home, ".gemini", "settings.json")}
+			return []string{filepath.Join(p.HomeDir, ".gemini", "settings.json")}
 		},
-		detect: func() bool {
-			return commandExists("gemini")
+		detect: func(_ Platform, d Detector) bool {
+			return d.CommandExists("gemini")
 		},
-		install:   jsonStandardInstall("mcpServers"),
-		uninstall: jsonStandardUninstall("mcpServers"),
+		format:             formatJSON,
+		installTransform:   transformStdInstall("mcpServers"),
+		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
 	AmazonQ: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".amazonq", "default.json")}
+				return []string{filepath.Join(projectDir(p, o), ".amazonq", "default.json")}
 			}
-			home, _ := os.UserHomeDir()
-			return []string{filepath.Join(home, ".aws", "amazonq", "default.json")}
+			return []string{filepath.Join(p.HomeDir, ".aws", "amazonq", "default.json")}
 		},
-		detect: func() bool {
-			home, _ := os.UserHomeDir()
-			return dirExists(filepath.Join(home, ".aws", "amazonq")) || commandExists("q")
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(filepath.Join(p.HomeDir, ".aws", "amazonq")) || d.CommandExists("q")
 		},
-		install:   amazonQInstall,
-		uninstall: amazonQUninstall,
+		format:             formatJSON,
+		installTransform:   transformAmazonQInstall,
+		uninstallTransform: transformAmazonQUninstall,
 	},
 
 	Codex: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".codex", "config.toml")}
+				return []string{filepath.Join(projectDir(p, o), ".codex", "config.toml")}
 			}
-			home, _ := os.UserHomeDir()
-			return []string{filepath.Join(home, ".codex", "config.toml")}
+			return []string{filepath.Join(p.HomeDir, ".codex", "config.toml")}
 		},
-		detect: func() bool {
-			return commandExists("codex")
+		detect: func(_ Platform, d Detector) bool {
+			return d.CommandExists("codex")
 		},
-		install:   codexInstall,
-		uninstall: codexUninstall,
+		format:             formatTOML,
+		installTransform:   transformCodexInstall,
+		uninstallTransform: transformCodexUninstall,
 	},
 
 	Goose: {
-		paths: func(o *options) []string {
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".goose", "config.yaml")}
+				return []string{filepath.Join(projectDir(p, o), ".goose", "config.yaml")}
 			}
-			home, _ := os.UserHomeDir()
-			return []string{filepath.Join(home, ".config", "goose", "config.yaml")}
+			return []string{filepath.Join(p.HomeDir, ".config", "goose", "config.yaml")}
 		},
-		detect: func() bool {
-			return commandExists("goose")
+		detect: func(_ Platform, d Detector) bool {
+			return d.CommandExists("goose")
 		},
-		install:   gooseInstall,
-		uninstall: gooseUninstall,
+		format:             formatYAML,
+		installTransform:   transformGooseInstall,
+		uninstallTransform: transformGooseUninstall,
 	},
 
 	Continue: {
-		paths: func(o *options) []string {
-			// Continue uses a directory of config files, not a single file.
-			// The path returned is the directory; install/uninstall write individual files.
+		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
-				return []string{filepath.Join(projectDir(o), ".continue", "mcpServers")}
+				return []string{filepath.Join(projectDir(p, o), ".continue", "mcpServers")}
 			}
-			home, _ := os.UserHomeDir()
-			return []string{filepath.Join(home, ".continue", "mcpServers")}
+			return []string{filepath.Join(p.HomeDir, ".continue", "mcpServers")}
 		},
-		detect: func() bool {
-			home, _ := os.UserHomeDir()
-			return dirExists(filepath.Join(home, ".continue"))
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(filepath.Join(p.HomeDir, ".continue"))
 		},
-		install:   continueInstall,
-		uninstall: continueUninstall,
+		format:             formatContinueDir,
+		installTransform:   transformContinueInstall,
+		uninstallTransform: nil, // handled directly in doUninstall
 	},
 }
 
-// vsCodeExtPaths returns the globalStorage settings path for a VS Code extension.
-func vsCodeExtPaths(extensionID, filename string) []string {
-	home, _ := os.UserHomeDir()
+// --- helpers ---
+
+func vsCodeExtPaths(p Platform, extensionID, filename string) []string {
 	rel := filepath.Join("Code", "User", "globalStorage", extensionID, "settings", filename)
-	switch runtime.GOOS {
+	switch p.GOOS {
 	case "darwin":
-		return []string{filepath.Join(home, "Library", "Application Support", rel)}
+		return []string{filepath.Join(p.HomeDir, "Library", "Application Support", rel)}
 	case "linux":
-		return []string{filepath.Join(home, ".config", rel)}
+		return []string{filepath.Join(p.HomeDir, ".config", rel)}
 	case "windows":
-		if ad := os.Getenv("APPDATA"); ad != "" {
-			return []string{filepath.Join(ad, rel)}
+		if p.AppData != "" {
+			return []string{filepath.Join(p.AppData, rel)}
 		}
 	}
 	return nil
 }
 
-func projectDir(o *options) string {
+func projectDir(p Platform, o *options) string {
 	if o.projectDir != "" {
 		return o.projectDir
 	}
-	dir, _ := os.Getwd()
-	return dir
-}
-
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+	return p.WorkingDir
 }

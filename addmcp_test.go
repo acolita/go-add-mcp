@@ -2,10 +2,10 @@ package addmcp
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -15,114 +15,209 @@ var testServer = Server{
 	Args:    []string{"mcp"},
 }
 
-// --- Standard JSON format tests ---
+// ==================== Pure transform tests ====================
+// No IO, no filesystem — just inputs and outputs.
 
-func TestStandardInstallCreatesNewFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "sub", "config.json")
-	install := jsonStandardInstall("mcpServers")
-
-	if err := install(path, testServer); err != nil {
-		t.Fatal(err)
-	}
-
-	m := readJSON(t, path)
-	servers := m["mcpServers"].(map[string]any)
-	agend := servers["agend"].(map[string]any)
-
-	assertEqual(t, agend["command"], "agend")
-	assertSlice(t, agend["args"], []string{"mcp"})
+func TestTransformStdInstallEmpty(t *testing.T) {
+	m := transformStdInstall("mcpServers")(map[string]any{}, testServer)
+	assertStdServer(t, m, "mcpServers")
 }
 
-func TestStandardInstallPreservesExisting(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	writeTestJSON(t, path, map[string]any{
+func TestTransformStdInstallPreserves(t *testing.T) {
+	existing := map[string]any{
 		"mcpServers": map[string]any{
 			"other": map[string]any{"command": "other-cmd"},
 		},
-		"customKey": "keep-me",
-	})
-
-	install := jsonStandardInstall("mcpServers")
-	if err := install(path, testServer); err != nil {
-		t.Fatal(err)
+		"customKey": "keep",
 	}
-
-	m := readJSON(t, path)
-	assertEqual(t, m["customKey"], "keep-me")
-
-	servers := m["mcpServers"].(map[string]any)
-	if _, ok := servers["other"]; !ok {
-		t.Error("existing server was lost")
+	m := transformStdInstall("mcpServers")(existing, testServer)
+	assertEqual(t, m["customKey"], "keep")
+	if _, ok := m["mcpServers"].(map[string]any)["other"]; !ok {
+		t.Error("existing server lost")
 	}
-	if _, ok := servers["agend"]; !ok {
-		t.Error("agend not added")
-	}
+	assertStdServer(t, m, "mcpServers")
 }
 
-func TestStandardInstallOverwritesExisting(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	writeTestJSON(t, path, map[string]any{
+func TestTransformStdInstallOverwrites(t *testing.T) {
+	existing := map[string]any{
 		"mcpServers": map[string]any{
-			"agend": map[string]any{"transport": "sse", "url": "https://old"},
+			"agend": map[string]any{"transport": "sse", "url": "old"},
 		},
-	})
-
-	install := jsonStandardInstall("mcpServers")
-	if err := install(path, testServer); err != nil {
-		t.Fatal(err)
 	}
-
-	m := readJSON(t, path)
+	m := transformStdInstall("mcpServers")(existing, testServer)
 	agend := m["mcpServers"].(map[string]any)["agend"].(map[string]any)
 	assertEqual(t, agend["command"], "agend")
 	if _, ok := agend["url"]; ok {
-		t.Error("old url field should be gone")
+		t.Error("old url should be gone")
 	}
 }
 
-func TestStandardUninstall(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	writeTestJSON(t, path, map[string]any{
+func TestTransformStdUninstall(t *testing.T) {
+	existing := map[string]any{
 		"mcpServers": map[string]any{
 			"agend": map[string]any{"command": "agend"},
 			"other": map[string]any{"command": "other"},
 		},
-	})
-
-	uninstall := jsonStandardUninstall("mcpServers")
-	if err := uninstall(path, "agend"); err != nil {
-		t.Fatal(err)
 	}
-
-	m := readJSON(t, path)
+	m := transformStdUninstall("mcpServers")(existing, "agend")
 	servers := m["mcpServers"].(map[string]any)
 	if _, ok := servers["agend"]; ok {
-		t.Error("agend should have been removed")
+		t.Error("agend should be removed")
 	}
 	if _, ok := servers["other"]; !ok {
-		t.Error("other server should remain")
+		t.Error("other should remain")
 	}
 }
 
-func TestStandardUninstallNonexistentFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "no-such-file.json")
-	uninstall := jsonStandardUninstall("mcpServers")
-	if err := uninstall(path, "agend"); err != nil {
-		t.Fatalf("uninstall from missing file should be no-op, got: %v", err)
+func TestTransformStdUninstallEmpty(t *testing.T) {
+	m := transformStdUninstall("mcpServers")(map[string]any{}, "agend")
+	if m == nil {
+		t.Error("should return non-nil map")
 	}
 }
 
-func TestMalformedJSON(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(path, []byte("{broken"), 0644)
+func TestTransformVSCode(t *testing.T) {
+	m := transformVSCodeInstall(map[string]any{}, testServer)
+	agend := m["servers"].(map[string]any)["agend"].(map[string]any)
+	assertEqual(t, agend["type"], "stdio")
+	assertEqual(t, agend["command"], "agend")
+}
 
-	install := jsonStandardInstall("mcpServers")
-	if err := install(path, testServer); err == nil {
-		t.Fatal("expected error for malformed JSON")
+func TestTransformVSCodeHTTP(t *testing.T) {
+	s := Server{Name: "remote", URL: "https://example.com/mcp"}
+	m := transformVSCodeInstall(map[string]any{}, s)
+	entry := m["servers"].(map[string]any)["remote"].(map[string]any)
+	assertEqual(t, entry["type"], "http")
+	assertEqual(t, entry["url"], "https://example.com/mcp")
+}
+
+func TestTransformZed(t *testing.T) {
+	existing := map[string]any{"theme": "One Dark"}
+	m := transformZedInstall(existing, testServer)
+	assertEqual(t, m["theme"], "One Dark")
+	agend := m["context_servers"].(map[string]any)["agend"].(map[string]any)
+	assertEqual(t, agend["source"], "custom")
+	assertEqual(t, agend["command"], "agend")
+}
+
+func TestTransformAmazonQInstall(t *testing.T) {
+	m := transformAmazonQInstall(map[string]any{}, testServer)
+	servers := m["mcpServers"].([]any)
+	if len(servers) != 1 {
+		t.Fatalf("expected 1, got %d", len(servers))
+	}
+	entry := servers[0].(map[string]any)
+	assertEqual(t, entry["name"], "agend")
+	assertEqual(t, entry["transport"], "stdio")
+	assertEqual(t, entry["command"], "agend")
+	assertSlice(t, entry["arguments"], []string{"mcp"})
+}
+
+func TestTransformAmazonQReplaces(t *testing.T) {
+	existing := map[string]any{
+		"mcpServers": []any{
+			map[string]any{"name": "agend", "transport": "sse"},
+			map[string]any{"name": "other", "transport": "stdio"},
+		},
+	}
+	m := transformAmazonQInstall(existing, testServer)
+	servers := m["mcpServers"].([]any)
+	if len(servers) != 2 {
+		t.Fatalf("expected 2, got %d", len(servers))
+	}
+	found := false
+	for _, s := range servers {
+		e := s.(map[string]any)
+		if e["name"] == "other" {
+			found = true
+		}
+		if e["name"] == "agend" {
+			assertEqual(t, e["transport"], "stdio")
+		}
+	}
+	if !found {
+		t.Error("other server lost")
 	}
 }
 
-// --- JSONC tests ---
+func TestTransformAmazonQUninstall(t *testing.T) {
+	existing := map[string]any{
+		"mcpServers": []any{
+			map[string]any{"name": "agend"},
+			map[string]any{"name": "other"},
+		},
+	}
+	m := transformAmazonQUninstall(existing, "agend")
+	servers := m["mcpServers"].([]any)
+	if len(servers) != 1 {
+		t.Fatalf("expected 1, got %d", len(servers))
+	}
+	assertEqual(t, servers[0].(map[string]any)["name"], "other")
+}
+
+func TestTransformGoose(t *testing.T) {
+	m := transformGooseInstall(map[string]any{}, testServer)
+	agend := m["extensions"].(map[string]any)["agend"].(map[string]any)
+	assertEqual(t, agend["cmd"], "agend")
+	assertEqual(t, agend["type"], "stdio")
+	assertEqual(t, agend["enabled"], true)
+}
+
+func TestTransformGooseUninstall(t *testing.T) {
+	m := map[string]any{
+		"extensions": map[string]any{
+			"agend": map[string]any{"cmd": "agend"},
+			"other": map[string]any{"cmd": "other"},
+		},
+	}
+	m = transformGooseUninstall(m, "agend")
+	ext := m["extensions"].(map[string]any)
+	if _, ok := ext["agend"]; ok {
+		t.Error("agend should be removed")
+	}
+	if _, ok := ext["other"]; !ok {
+		t.Error("other should remain")
+	}
+}
+
+func TestTransformCodex(t *testing.T) {
+	m := transformCodexInstall(map[string]any{}, testServer)
+	agend := m["mcp_servers"].(map[string]any)["agend"].(map[string]any)
+	assertEqual(t, agend["command"], "agend")
+}
+
+func TestTransformCodexUninstall(t *testing.T) {
+	m := map[string]any{"mcp_servers": map[string]any{"agend": map[string]any{"command": "agend"}}}
+	m = transformCodexUninstall(m, "agend")
+	if _, ok := m["mcp_servers"].(map[string]any)["agend"]; ok {
+		t.Error("should be removed")
+	}
+}
+
+func TestTransformContinue(t *testing.T) {
+	m := transformContinueInstall(nil, testServer)
+	agend := m["mcpServers"].(map[string]any)["agend"].(map[string]any)
+	assertEqual(t, agend["command"], "agend")
+}
+
+func TestTransformWithEnv(t *testing.T) {
+	s := Server{Name: "test", Command: "cmd", Env: map[string]string{"KEY": "val"}}
+	m := transformStdInstall("mcpServers")(map[string]any{}, s)
+	entry := m["mcpServers"].(map[string]any)["test"].(map[string]any)
+	env := entry["env"].(map[string]string)
+	assertEqual(t, env["KEY"], "val")
+}
+
+func TestTransformHTTPServer(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp", Headers: map[string]string{"Auth": "Bearer t"}}
+	m := transformStdInstall("mcpServers")(map[string]any{}, s)
+	entry := m["mcpServers"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["url"], "https://x.com/mcp")
+	headers := entry["headers"].(map[string]string)
+	assertEqual(t, headers["Auth"], "Bearer t")
+}
+
+// ==================== JSONC tests ====================
 
 func TestStripJSONC(t *testing.T) {
 	input := `{
@@ -151,298 +246,421 @@ func TestStripJSONCPreservesStrings(t *testing.T) {
 	assertEqual(t, m["key"], "has // comment and /* block */ inside")
 }
 
-// --- VS Code tests ---
+// ==================== Path resolution tests (pure, cross-platform) ====================
 
-func TestVSCodeInstall(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".vscode", "mcp.json")
-	if err := vscodeInstall(path, testServer); err != nil {
-		t.Fatal(err)
+func TestPaths(t *testing.T) {
+	tests := []struct {
+		name  string
+		agent Agent
+		plat  Platform
+		scope Scope
+		proj  string
+		want  []string
+	}{
+		// Claude Desktop
+		{
+			name: "ClaudeDesktop/darwin", agent: ClaudeDesktop,
+			plat: Platform{GOOS: "darwin", HomeDir: "/Users/a"},
+			want: []string{filepath.Join("/Users/a", "Library", "Application Support", "Claude", "claude_desktop_config.json")},
+		},
+		{
+			name: "ClaudeDesktop/linux", agent: ClaudeDesktop,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".config", "Claude", "claude_desktop_config.json")},
+		},
+		{
+			name: "ClaudeDesktop/windows", agent: ClaudeDesktop,
+			plat: Platform{GOOS: "windows", AppData: "/appdata"},
+			want: []string{filepath.Join("/appdata", "Claude", "claude_desktop_config.json")},
+		},
+		{
+			name: "ClaudeDesktop/project=nil", agent: ClaudeDesktop,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"}, scope: Project,
+			want: nil,
+		},
+
+		// Claude Code
+		{
+			name: "ClaudeCode/global", agent: ClaudeCode,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".claude.json")},
+		},
+		{
+			name: "ClaudeCode/project", agent: ClaudeCode,
+			plat: Platform{GOOS: "linux", WorkingDir: "/work"}, scope: Project,
+			want: []string{filepath.Join("/work", ".mcp.json")},
+		},
+		{
+			name: "ClaudeCode/project+dir", agent: ClaudeCode,
+			plat: Platform{GOOS: "linux"}, scope: Project, proj: "/my/proj",
+			want: []string{filepath.Join("/my/proj", ".mcp.json")},
+		},
+
+		// Cursor
+		{
+			name: "Cursor/global", agent: Cursor,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".cursor", "mcp.json")},
+		},
+		{
+			name: "Cursor/project", agent: Cursor,
+			plat: Platform{GOOS: "linux", WorkingDir: "/work"}, scope: Project,
+			want: []string{filepath.Join("/work", ".cursor", "mcp.json")},
+		},
+
+		// Windsurf (global only)
+		{
+			name: "Windsurf/global", agent: Windsurf,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".codeium", "windsurf", "mcp_config.json")},
+		},
+		{
+			name: "Windsurf/project=nil", agent: Windsurf,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"}, scope: Project,
+			want: nil,
+		},
+
+		// VS Code (project only)
+		{
+			name: "VSCode/project", agent: VSCode,
+			plat: Platform{GOOS: "linux", WorkingDir: "/work"}, scope: Project,
+			want: []string{filepath.Join("/work", ".vscode", "mcp.json")},
+		},
+		{
+			name: "VSCode/global=nil", agent: VSCode,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: nil,
+		},
+
+		// Zed
+		{
+			name: "Zed/linux", agent: Zed,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".config", "zed", "settings.json")},
+		},
+		{
+			name: "Zed/windows", agent: Zed,
+			plat: Platform{GOOS: "windows", AppData: "/appdata"},
+			want: []string{filepath.Join("/appdata", "Zed", "settings.json")},
+		},
+		{
+			name: "Zed/project", agent: Zed,
+			plat: Platform{GOOS: "linux", WorkingDir: "/work"}, scope: Project,
+			want: []string{filepath.Join("/work", ".zed", "settings.json")},
+		},
+
+		// Codex
+		{
+			name: "Codex/global", agent: Codex,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".codex", "config.toml")},
+		},
+
+		// Goose
+		{
+			name: "Goose/global", agent: Goose,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".config", "goose", "config.yaml")},
+		},
+
+		// Continue
+		{
+			name: "Continue/global", agent: Continue,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".continue", "mcpServers")},
+		},
 	}
 
-	m := readJSON(t, path)
-	servers := m["servers"].(map[string]any)
-	agend := servers["agend"].(map[string]any)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def := registry[tt.agent]
+			o := &options{scope: tt.scope, projectDir: tt.proj}
+			got := def.paths(tt.plat, o)
+			assertPaths(t, got, tt.want)
+		})
+	}
+}
 
+// ==================== Detection tests (pure, with fakeDetector) ====================
+
+func TestDetect(t *testing.T) {
+	tests := []struct {
+		name  string
+		agent Agent
+		plat  Platform
+		det   fakeDetector
+		want  bool
+	}{
+		{
+			name: "ClaudeDesktop/found", agent: ClaudeDesktop,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			det:  fakeDetector{dirs: map[string]bool{filepath.Join("/home/a", ".config", "Claude"): true}},
+			want: true,
+		},
+		{
+			name: "ClaudeDesktop/missing", agent: ClaudeDesktop,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			det:  fakeDetector{},
+			want: false,
+		},
+		{
+			name: "ClaudeCode/found", agent: ClaudeCode,
+			plat: Platform{GOOS: "linux"},
+			det:  fakeDetector{commands: map[string]bool{"claude": true}},
+			want: true,
+		},
+		{
+			name: "ClaudeCode/missing", agent: ClaudeCode,
+			plat: Platform{GOOS: "linux"},
+			det:  fakeDetector{},
+			want: false,
+		},
+		{
+			name: "Zed/dir", agent: Zed,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			det:  fakeDetector{dirs: map[string]bool{filepath.Join("/home/a", ".config", "zed"): true}},
+			want: true,
+		},
+		{
+			name: "Zed/command", agent: Zed,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			det:  fakeDetector{commands: map[string]bool{"zed": true}},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def := registry[tt.agent]
+			got := def.detect(tt.plat, tt.det)
+			if got != tt.want {
+				t.Errorf("detect = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectWithMultipleAgents(t *testing.T) {
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+	det := fakeDetector{
+		commands: map[string]bool{"claude": true, "gemini": true},
+		dirs:     map[string]bool{filepath.Join("/home/a", ".cursor"): true},
+	}
+	found := detectWith(det, plat)
+	agents := map[Agent]bool{}
+	for _, a := range found {
+		agents[a] = true
+	}
+	for _, want := range []Agent{ClaudeCode, Cursor, Gemini} {
+		if !agents[want] {
+			t.Errorf("expected %s to be detected", want)
+		}
+	}
+}
+
+// ==================== Integration tests with memFS ====================
+
+func TestInstallClaudeDesktopMemFS(t *testing.T) {
+	fsys := newMemFS()
+	plat := Platform{GOOS: "darwin", HomeDir: "/Users/alice"}
+	results := installWith(fsys, plat, testServer, []Agent{ClaudeDesktop})
+
+	if len(results) != 1 || results[0].Err != nil {
+		t.Fatalf("unexpected: %+v", results)
+	}
+	path := filepath.Join("/Users/alice", "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	assertEqual(t, results[0].Path, path)
+
+	m := parseMemJSON(t, fsys, path)
+	assertStdServer(t, m, "mcpServers")
+}
+
+func TestInstallPreservesExistingMemFS(t *testing.T) {
+	fsys := newMemFS()
+	path := filepath.Join("/home/a", ".claude.json")
+	existing, _ := json.Marshal(map[string]any{
+		"mcpServers": map[string]any{"other": map[string]any{"command": "other"}},
+		"customKey":  "keep",
+	})
+	fsys.putJSON(path, existing)
+
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+	results := installWith(fsys, plat, testServer, []Agent{ClaudeCode})
+
+	if results[0].Err != nil {
+		t.Fatal(results[0].Err)
+	}
+	m := parseMemJSON(t, fsys, path)
+	assertEqual(t, m["customKey"], "keep")
+	if _, ok := m["mcpServers"].(map[string]any)["other"]; !ok {
+		t.Error("existing server lost")
+	}
+	assertStdServer(t, m, "mcpServers")
+}
+
+func TestInstallVSCodeMemFS(t *testing.T) {
+	fsys := newMemFS()
+	plat := Platform{GOOS: "linux", WorkingDir: "/proj"}
+	results := installWith(fsys, plat, testServer, []Agent{VSCode}, WithScope(Project))
+
+	if results[0].Err != nil {
+		t.Fatal(results[0].Err)
+	}
+	path := filepath.Join("/proj", ".vscode", "mcp.json")
+	m := parseMemJSON(t, fsys, path)
+	agend := m["servers"].(map[string]any)["agend"].(map[string]any)
 	assertEqual(t, agend["type"], "stdio")
 	assertEqual(t, agend["command"], "agend")
 }
 
-func TestVSCodeInstallHTTP(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "mcp.json")
-	s := Server{Name: "remote", URL: "https://example.com/mcp"}
-	if err := vscodeInstall(path, s); err != nil {
-		t.Fatal(err)
+func TestInstallGooseMemFS(t *testing.T) {
+	fsys := newMemFS()
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+	results := installWith(fsys, plat, testServer, []Agent{Goose})
+
+	if results[0].Err != nil {
+		t.Fatal(results[0].Err)
 	}
-
-	m := readJSON(t, path)
-	remote := m["servers"].(map[string]any)["remote"].(map[string]any)
-	assertEqual(t, remote["type"], "http")
-	assertEqual(t, remote["url"], "https://example.com/mcp")
-}
-
-// --- Zed tests ---
-
-func TestZedInstall(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.json")
-	// Pre-populate with existing Zed settings.
-	writeTestJSON(t, path, map[string]any{
-		"theme": "One Dark",
-	})
-
-	if err := zedInstall(path, testServer); err != nil {
-		t.Fatal(err)
-	}
-
-	m := readJSON(t, path)
-	assertEqual(t, m["theme"], "One Dark") // preserved
-	servers := m["context_servers"].(map[string]any)
-	agend := servers["agend"].(map[string]any)
-	assertEqual(t, agend["source"], "custom")
-	assertEqual(t, agend["command"], "agend")
-}
-
-// --- Amazon Q tests ---
-
-func TestAmazonQInstall(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "default.json")
-	if err := amazonQInstall(path, testServer); err != nil {
-		t.Fatal(err)
-	}
-
-	m := readJSON(t, path)
-	servers := m["mcpServers"].([]any)
-	if len(servers) != 1 {
-		t.Fatalf("expected 1 server, got %d", len(servers))
-	}
-	entry := servers[0].(map[string]any)
-	assertEqual(t, entry["name"], "agend")
-	assertEqual(t, entry["transport"], "stdio")
-	assertEqual(t, entry["command"], "agend")
-	assertSlice(t, entry["arguments"], []string{"mcp"})
-}
-
-func TestAmazonQInstallReplaces(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "default.json")
-	writeTestJSON(t, path, map[string]any{
-		"mcpServers": []any{
-			map[string]any{"name": "agend", "transport": "sse", "url": "old"},
-			map[string]any{"name": "other", "transport": "stdio", "command": "other"},
-		},
-	})
-
-	if err := amazonQInstall(path, testServer); err != nil {
-		t.Fatal(err)
-	}
-
-	m := readJSON(t, path)
-	servers := m["mcpServers"].([]any)
-	if len(servers) != 2 {
-		t.Fatalf("expected 2 servers, got %d", len(servers))
-	}
-	// "other" should still be there
-	found := false
-	for _, s := range servers {
-		e := s.(map[string]any)
-		if e["name"] == "other" {
-			found = true
-		}
-		if e["name"] == "agend" {
-			assertEqual(t, e["transport"], "stdio")
-			assertEqual(t, e["command"], "agend")
-		}
-	}
-	if !found {
-		t.Error("other server was lost")
-	}
-}
-
-func TestAmazonQUninstall(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "default.json")
-	writeTestJSON(t, path, map[string]any{
-		"mcpServers": []any{
-			map[string]any{"name": "agend", "transport": "stdio"},
-			map[string]any{"name": "other", "transport": "stdio"},
-		},
-	})
-
-	if err := amazonQUninstall(path, "agend"); err != nil {
-		t.Fatal(err)
-	}
-
-	m := readJSON(t, path)
-	servers := m["mcpServers"].([]any)
-	if len(servers) != 1 {
-		t.Fatalf("expected 1 server, got %d", len(servers))
-	}
-	assertEqual(t, servers[0].(map[string]any)["name"], "other")
-}
-
-// --- Goose YAML tests ---
-
-func TestGooseInstall(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := gooseInstall(path, testServer); err != nil {
-		t.Fatal(err)
-	}
-
-	data, _ := os.ReadFile(path)
+	path := filepath.Join("/home/a", ".config", "goose", "config.yaml")
 	var m map[string]any
-	if err := yaml.Unmarshal(data, &m); err != nil {
+	if err := yaml.Unmarshal(fsys.files[path], &m); err != nil {
 		t.Fatal(err)
 	}
-
-	ext := m["extensions"].(map[string]any)
-	agend := ext["agend"].(map[string]any)
+	agend := m["extensions"].(map[string]any)["agend"].(map[string]any)
 	assertEqual(t, agend["cmd"], "agend")
 	assertEqual(t, agend["type"], "stdio")
-	assertEqual(t, agend["enabled"], true)
 }
 
-func TestGooseUninstall(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	gooseInstall(path, testServer)
-	gooseInstall(path, Server{Name: "other", Command: "other"})
+func TestInstallCodexMemFS(t *testing.T) {
+	fsys := newMemFS()
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+	results := installWith(fsys, plat, testServer, []Agent{Codex})
 
-	if err := gooseUninstall(path, "agend"); err != nil {
-		t.Fatal(err)
+	if results[0].Err != nil {
+		t.Fatal(results[0].Err)
 	}
-
-	data, _ := os.ReadFile(path)
+	path := filepath.Join("/home/a", ".codex", "config.toml")
 	var m map[string]any
-	yaml.Unmarshal(data, &m)
-
-	ext := m["extensions"].(map[string]any)
-	if _, ok := ext["agend"]; ok {
-		t.Error("agend should be removed")
-	}
-	if _, ok := ext["other"]; !ok {
-		t.Error("other should remain")
-	}
-}
-
-// --- Codex TOML tests ---
-
-func TestCodexInstall(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := codexInstall(path, testServer); err != nil {
+	if err := toml.Unmarshal(fsys.files[path], &m); err != nil {
 		t.Fatal(err)
 	}
-
-	m, err := readTOMLFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	servers := m["mcp_servers"].(map[string]any)
 	agend := servers["agend"].(map[string]any)
 	assertEqual(t, agend["command"], "agend")
 }
 
-func TestCodexUninstall(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	codexInstall(path, testServer)
+func TestInstallContinueMemFS(t *testing.T) {
+	fsys := newMemFS()
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+	results := installWith(fsys, plat, testServer, []Agent{Continue})
 
-	if err := codexUninstall(path, "agend"); err != nil {
-		t.Fatal(err)
+	if results[0].Err != nil {
+		t.Fatal(results[0].Err)
 	}
-
-	m, err := readTOMLFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	servers := m["mcp_servers"].(map[string]any)
-	if _, ok := servers["agend"]; ok {
-		t.Error("agend should be removed")
-	}
-}
-
-// --- Continue directory tests ---
-
-func TestContinueInstall(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "mcpServers")
-	if err := continueInstall(dir, testServer); err != nil {
-		t.Fatal(err)
-	}
-
-	m := readJSON(t, filepath.Join(dir, "agend.json"))
-	servers := m["mcpServers"].(map[string]any)
-	agend := servers["agend"].(map[string]any)
+	dir := filepath.Join("/home/a", ".continue", "mcpServers")
+	filePath := filepath.Join(dir, "agend.json")
+	m := parseMemJSON(t, fsys, filePath)
+	agend := m["mcpServers"].(map[string]any)["agend"].(map[string]any)
 	assertEqual(t, agend["command"], "agend")
 }
 
-func TestContinueUninstall(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "mcpServers")
-	continueInstall(dir, testServer)
+func TestUninstallNonexistentMemFS(t *testing.T) {
+	fsys := newMemFS()
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+	results := uninstallWith(fsys, plat, "agend", []Agent{ClaudeDesktop})
 
-	if err := continueUninstall(dir, "agend"); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(dir, "agend.json")); !os.IsNotExist(err) {
-		t.Error("agend.json should be deleted")
+	if results[0].Err != nil {
+		t.Fatalf("uninstall from missing file should be no-op: %v", results[0].Err)
 	}
 }
 
-func TestContinueUninstallNonexistent(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "mcpServers")
-	if err := continueUninstall(dir, "agend"); err != nil {
-		t.Fatalf("should be no-op: %v", err)
+func TestUninstallContinueMemFS(t *testing.T) {
+	fsys := newMemFS()
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+
+	// Install first
+	installWith(fsys, plat, testServer, []Agent{Continue})
+
+	// Then uninstall
+	results := uninstallWith(fsys, plat, "agend", []Agent{Continue})
+	if results[0].Err != nil {
+		t.Fatal(results[0].Err)
+	}
+
+	filePath := filepath.Join("/home/a", ".continue", "mcpServers", "agend.json")
+	if _, ok := fsys.files[filePath]; ok {
+		t.Error("file should be removed")
 	}
 }
-
-// --- Install/Uninstall public API tests ---
 
 func TestInstallUnknownAgent(t *testing.T) {
-	results := Install(testServer, []Agent{"nonexistent"})
+	fsys := newMemFS()
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+	results := installWith(fsys, plat, testServer, []Agent{"nonexistent"})
 	if len(results) != 1 || results[0].Err == nil {
 		t.Fatal("expected error for unknown agent")
 	}
 }
 
-func TestServerWithEnv(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	s := Server{
-		Name:    "test",
-		Command: "test-cmd",
-		Env:     map[string]string{"API_KEY": "secret"},
-	}
-	install := jsonStandardInstall("mcpServers")
-	if err := install(path, s); err != nil {
-		t.Fatal(err)
-	}
+func TestMalformedJSONMemFS(t *testing.T) {
+	fsys := newMemFS()
+	path := filepath.Join("/home/a", ".config", "Claude", "claude_desktop_config.json")
+	fsys.putJSON(path, []byte("{broken"))
 
-	m := readJSON(t, path)
-	entry := m["mcpServers"].(map[string]any)["test"].(map[string]any)
-	env := entry["env"].(map[string]any)
-	assertEqual(t, env["API_KEY"], "secret")
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+	results := installWith(fsys, plat, testServer, []Agent{ClaudeDesktop})
+	if results[0].Err == nil {
+		t.Fatal("expected error for malformed JSON")
+	}
 }
 
-func TestHTTPServer(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	s := Server{
-		Name:    "remote",
-		URL:     "https://example.com/mcp",
-		Headers: map[string]string{"Authorization": "Bearer token"},
-	}
-	install := jsonStandardInstall("mcpServers")
-	if err := install(path, s); err != nil {
-		t.Fatal(err)
+func TestJSONCFileMemFS(t *testing.T) {
+	fsys := newMemFS()
+	path := filepath.Join("/proj", ".vscode", "mcp.json")
+	// Pre-populate with JSONC content
+	fsys.putJSON(path, []byte(`{
+  // existing servers
+  "servers": {
+    "other": {"type": "stdio", "command": "other"}
+  }
+}`))
+
+	plat := Platform{GOOS: "linux", WorkingDir: "/proj"}
+	results := installWith(fsys, plat, testServer, []Agent{VSCode}, WithScope(Project))
+	if results[0].Err != nil {
+		t.Fatal(results[0].Err)
 	}
 
-	m := readJSON(t, path)
-	entry := m["mcpServers"].(map[string]any)["remote"].(map[string]any)
-	assertEqual(t, entry["url"], "https://example.com/mcp")
-	headers := entry["headers"].(map[string]any)
-	assertEqual(t, headers["Authorization"], "Bearer token")
+	m := parseMemJSON(t, fsys, path)
+	servers := m["servers"].(map[string]any)
+	if _, ok := servers["other"]; !ok {
+		t.Error("existing server lost after JSONC parse")
+	}
+	agend := servers["agend"].(map[string]any)
+	assertEqual(t, agend["type"], "stdio")
 }
 
-// --- helpers ---
+// ==================== Helpers ====================
 
-func readJSON(t *testing.T, path string) map[string]any {
+func assertStdServer(t *testing.T, m map[string]any, key string) {
 	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+	servers, ok := m[key].(map[string]any)
+	if !ok {
+		t.Fatalf("key %q missing or wrong type", key)
+	}
+	agend, ok := servers["agend"].(map[string]any)
+	if !ok {
+		t.Fatal("agend entry missing")
+	}
+	assertEqual(t, agend["command"], "agend")
+	assertSlice(t, agend["args"], []string{"mcp"})
+}
+
+func parseMemJSON(t *testing.T, fsys *memFS, path string) map[string]any {
+	t.Helper()
+	data, ok := fsys.files[path]
+	if !ok {
+		t.Fatalf("file not found in memFS: %s", path)
 	}
 	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -451,12 +669,15 @@ func readJSON(t *testing.T, path string) map[string]any {
 	return m
 }
 
-func writeTestJSON(t *testing.T, path string, v any) {
+func assertPaths(t *testing.T, got, want []string) {
 	t.Helper()
-	os.MkdirAll(filepath.Dir(path), 0755)
-	data, _ := json.Marshal(v)
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
+	if len(got) != len(want) {
+		t.Fatalf("paths: got %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("paths[%d]: got %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 
@@ -469,16 +690,26 @@ func assertEqual(t *testing.T, got, want any) {
 
 func assertSlice(t *testing.T, got any, want []string) {
 	t.Helper()
-	arr, ok := got.([]any)
-	if !ok {
-		t.Fatalf("expected []any, got %T", got)
-	}
-	if len(arr) != len(want) {
-		t.Fatalf("len = %d, want %d", len(arr), len(want))
-	}
-	for i, v := range arr {
-		if v != want[i] {
-			t.Errorf("[%d] = %v, want %v", i, v, want[i])
+	switch v := got.(type) {
+	case []string:
+		if len(v) != len(want) {
+			t.Fatalf("len = %d, want %d", len(v), len(want))
 		}
+		for i := range v {
+			if v[i] != want[i] {
+				t.Errorf("[%d] = %v, want %v", i, v[i], want[i])
+			}
+		}
+	case []any:
+		if len(v) != len(want) {
+			t.Fatalf("len = %d, want %d", len(v), len(want))
+		}
+		for i := range v {
+			if v[i] != want[i] {
+				t.Errorf("[%d] = %v, want %v", i, v[i], want[i])
+			}
+		}
+	default:
+		t.Fatalf("expected []string or []any, got %T", got)
 	}
 }
