@@ -217,6 +217,105 @@ func TestTransformHTTPServer(t *testing.T) {
 	assertEqual(t, headers["Auth"], "Bearer t")
 }
 
+// --- Amazon Q HTTP + env coverage ---
+
+func TestTransformAmazonQHTTP(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp", Headers: map[string]string{"Auth": "tok"}, Env: map[string]string{"K": "V"}}
+	m := transformAmazonQInstall(map[string]any{}, s)
+	entry := m["mcpServers"].([]any)[0].(map[string]any)
+	assertEqual(t, entry["transport"], "http")
+	assertEqual(t, entry["url"], "https://x.com/mcp")
+	assertEqual(t, entry["headers"].(map[string]string)["Auth"], "tok")
+	assertEqual(t, entry["env"].(map[string]string)["K"], "V")
+}
+
+func TestTransformAmazonQUninstallEmpty(t *testing.T) {
+	m := transformAmazonQUninstall(map[string]any{}, "agend")
+	if m == nil {
+		t.Error("should return non-nil map")
+	}
+}
+
+// --- Goose HTTP + env + nil coverage ---
+
+func TestTransformGooseHTTP(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp", Headers: map[string]string{"Auth": "tok"}, Env: map[string]string{"K": "V"}}
+	m := transformGooseInstall(map[string]any{}, s)
+	entry := m["extensions"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["type"], "sse")
+	assertEqual(t, entry["uri"], "https://x.com/mcp")
+	assertEqual(t, entry["headers"].(map[string]string)["Auth"], "tok")
+	assertEqual(t, entry["envs"].(map[string]string)["K"], "V")
+}
+
+func TestTransformGooseInstallWithEnv(t *testing.T) {
+	s := Server{Name: "x", Command: "x", Env: map[string]string{"K": "V"}}
+	m := transformGooseInstall(map[string]any{}, s)
+	entry := m["extensions"].(map[string]any)["x"].(map[string]any)
+	assertEqual(t, entry["envs"].(map[string]string)["K"], "V")
+}
+
+func TestTransformGooseUninstallEmpty(t *testing.T) {
+	m := transformGooseUninstall(map[string]any{}, "agend")
+	if m == nil {
+		t.Error("should return non-nil map")
+	}
+}
+
+// --- Codex HTTP + env + nil coverage ---
+
+func TestTransformCodexHTTP(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp", Headers: map[string]string{"Auth": "tok"}, Env: map[string]string{"K": "V"}}
+	m := transformCodexInstall(map[string]any{}, s)
+	entry := m["mcp_servers"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["url"], "https://x.com/mcp")
+	assertEqual(t, entry["http_headers"].(map[string]string)["Auth"], "tok")
+	assertEqual(t, entry["env"].(map[string]string)["K"], "V")
+}
+
+func TestTransformCodexInstallWithEnv(t *testing.T) {
+	s := Server{Name: "x", Command: "x", Env: map[string]string{"K": "V"}}
+	m := transformCodexInstall(map[string]any{}, s)
+	entry := m["mcp_servers"].(map[string]any)["x"].(map[string]any)
+	assertEqual(t, entry["env"].(map[string]string)["K"], "V")
+}
+
+func TestTransformCodexUninstallEmpty(t *testing.T) {
+	m := transformCodexUninstall(map[string]any{}, "agend")
+	if m == nil {
+		t.Error("should return non-nil map")
+	}
+}
+
+// --- stripJSONC edge cases ---
+
+func TestStripJSONCUnterminatedBlock(t *testing.T) {
+	input := `{"key": "value" /* unterminated`
+	got := stripJSONC([]byte(input))
+	// Should not panic; block comment consumed to end
+	if len(got) == 0 {
+		t.Error("should produce output")
+	}
+}
+
+func TestStripJSONCEscapedQuotes(t *testing.T) {
+	input := `{"key": "value with \"escaped\" quotes"}`
+	got := stripJSONC([]byte(input))
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	assertEqual(t, m["key"], `value with "escaped" quotes`)
+}
+
+func TestStripJSONCUnterminatedString(t *testing.T) {
+	input := `{"key": "unterminated`
+	got := stripJSONC([]byte(input))
+	if len(got) == 0 {
+		t.Error("should produce output")
+	}
+}
+
 // ==================== JSONC tests ====================
 
 func TestStripJSONC(t *testing.T) {
