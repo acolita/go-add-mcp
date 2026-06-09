@@ -44,6 +44,9 @@ func TestGoldenFiles(t *testing.T) {
 		{Codex, "codex.toml"},
 		{Goose, "goose.yaml"},
 		{Continue, "continue.json"},
+		{Antigravity, "antigravity.json"},
+		{OpenCode, "opencode.json"},
+		{GitHubCopilotCLI, "github-copilot-cli.json"},
 	}
 
 	for _, tt := range tests {

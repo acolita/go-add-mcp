@@ -1,0 +1,13 @@
+{
+  "mcp": {
+    "agend": {
+      "command": [
+        "agend",
+        "mcp"
+      ],
+      "enabled": true,
+      "environment": {},
+      "type": "local"
+    }
+  }
+}

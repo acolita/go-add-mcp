@@ -173,13 +173,90 @@ func TestTransformHTTPServer(t *testing.T) {
 // --- Goose HTTP + env + nil coverage ---
 
 func TestTransformGooseHTTP(t *testing.T) {
-	s := Server{Name: "r", URL: "https://x.com/mcp", Headers: map[string]string{"Auth": "tok"}, Env: map[string]string{"K": "V"}}
+	s := Server{Name: "r", URL: "https://x.com/mcp", Headers: map[string]string{"Auth": "tok"}}
+	m := transformGooseInstall(map[string]any{}, s)
+	entry := m["extensions"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["type"], "streamable_http")
+	assertEqual(t, entry["uri"], "https://x.com/mcp")
+	assertEqual(t, entry["headers"].(map[string]string)["Auth"], "tok")
+}
+
+func TestTransformGooseHTTPSSE(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp", Transport: "sse"}
 	m := transformGooseInstall(map[string]any{}, s)
 	entry := m["extensions"].(map[string]any)["r"].(map[string]any)
 	assertEqual(t, entry["type"], "sse")
-	assertEqual(t, entry["uri"], "https://x.com/mcp")
-	assertEqual(t, entry["headers"].(map[string]string)["Auth"], "tok")
-	assertEqual(t, entry["envs"].(map[string]string)["K"], "V")
+}
+
+func TestTransformZedHTTP(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp"}
+	m := transformZedInstall(map[string]any{}, s)
+	entry := m["context_servers"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["type"], "http")
+	assertEqual(t, entry["source"], "custom")
+	assertEqual(t, entry["url"], "https://x.com/mcp")
+}
+
+func TestTransformCodexHTTPType(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp", Transport: "sse"}
+	m := transformCodexInstall(map[string]any{}, s)
+	entry := m["mcp_servers"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["type"], "sse")
+}
+
+func TestTransformAntigravity(t *testing.T) {
+	m := transformAntigravityInstall(map[string]any{}, testServer)
+	entry := m["mcpServers"].(map[string]any)["agend"].(map[string]any)
+	assertEqual(t, entry["command"], "agend")
+}
+
+func TestTransformAntigravityHTTP(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp"}
+	m := transformAntigravityInstall(map[string]any{}, s)
+	entry := m["mcpServers"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["serverUrl"], "https://x.com/mcp")
+	if _, ok := entry["url"]; ok {
+		t.Error("antigravity should use serverUrl, not url")
+	}
+}
+
+func TestTransformOpenCode(t *testing.T) {
+	m := transformOpenCodeInstall(map[string]any{}, testServer)
+	entry := m["mcp"].(map[string]any)["agend"].(map[string]any)
+	assertEqual(t, entry["type"], "local")
+	assertEqual(t, entry["enabled"], true)
+	cmd := entry["command"].([]string)
+	if len(cmd) != 2 || cmd[0] != "agend" || cmd[1] != "mcp" {
+		t.Errorf("command = %v, want [agend mcp]", cmd)
+	}
+}
+
+func TestTransformOpenCodeHTTP(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp"}
+	m := transformOpenCodeInstall(map[string]any{}, s)
+	entry := m["mcp"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["type"], "remote")
+	assertEqual(t, entry["url"], "https://x.com/mcp")
+	assertEqual(t, entry["enabled"], true)
+}
+
+func TestTransformCopilot(t *testing.T) {
+	m := transformCopilotInstall(map[string]any{}, testServer)
+	entry := m["mcpServers"].(map[string]any)["agend"].(map[string]any)
+	assertEqual(t, entry["type"], "stdio")
+	assertEqual(t, entry["command"], "agend")
+	tools := entry["tools"].([]string)
+	if len(tools) != 1 || tools[0] != "*" {
+		t.Errorf("tools = %v, want [*]", tools)
+	}
+}
+
+func TestTransformCopilotHTTP(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp"}
+	m := transformCopilotInstall(map[string]any{}, s)
+	entry := m["mcpServers"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["type"], "http")
+	assertEqual(t, entry["url"], "https://x.com/mcp")
 }
 
 func TestTransformGooseInstallWithEnv(t *testing.T) {
@@ -353,16 +430,26 @@ func TestPaths(t *testing.T) {
 			want: nil,
 		},
 
-		// VS Code (project only)
+		// VS Code
 		{
 			name: "VSCode/project", agent: VSCode,
 			plat: Platform{GOOS: "linux", WorkingDir: "/work"}, scope: Project,
 			want: []string{filepath.Join("/work", ".vscode", "mcp.json")},
 		},
 		{
-			name: "VSCode/global=nil", agent: VSCode,
+			name: "VSCode/linux", agent: VSCode,
 			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
-			want: nil,
+			want: []string{filepath.Join("/home/a", ".config", "Code", "User", "mcp.json")},
+		},
+		{
+			name: "VSCode/darwin", agent: VSCode,
+			plat: Platform{GOOS: "darwin", HomeDir: "/Users/a"},
+			want: []string{filepath.Join("/Users/a", "Library", "Application Support", "Code", "User", "mcp.json")},
+		},
+		{
+			name: "VSCode/linux+xdg", agent: VSCode,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a", XDGConfigHome: "/custom"},
+			want: []string{filepath.Join("/custom", "Code", "User", "mcp.json")},
 		},
 
 		// Zed
@@ -370,6 +457,11 @@ func TestPaths(t *testing.T) {
 			name: "Zed/linux", agent: Zed,
 			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
 			want: []string{filepath.Join("/home/a", ".config", "zed", "settings.json")},
+		},
+		{
+			name: "Zed/darwin", agent: Zed,
+			plat: Platform{GOOS: "darwin", HomeDir: "/Users/a"},
+			want: []string{filepath.Join("/Users/a", "Library", "Application Support", "Zed", "settings.json")},
 		},
 		{
 			name: "Zed/windows", agent: Zed,
@@ -388,6 +480,11 @@ func TestPaths(t *testing.T) {
 			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
 			want: []string{filepath.Join("/home/a", ".codex", "config.toml")},
 		},
+		{
+			name: "Codex/CODEX_HOME", agent: Codex,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a", CodexHome: "/elsewhere"},
+			want: []string{filepath.Join("/elsewhere", "config.toml")},
+		},
 
 		// Goose
 		{
@@ -395,12 +492,53 @@ func TestPaths(t *testing.T) {
 			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
 			want: []string{filepath.Join("/home/a", ".config", "goose", "config.yaml")},
 		},
+		{
+			name: "Goose/XDG", agent: Goose,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a", XDGConfigHome: "/custom"},
+			want: []string{filepath.Join("/custom", "goose", "config.yaml")},
+		},
 
 		// Continue
 		{
 			name: "Continue/global", agent: Continue,
 			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
 			want: []string{filepath.Join("/home/a", ".continue", "mcpServers")},
+		},
+
+		// Antigravity (global only)
+		{
+			name: "Antigravity/global", agent: Antigravity,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".gemini", "antigravity", "mcp_config.json")},
+		},
+		{
+			name: "Antigravity/project=nil", agent: Antigravity,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"}, scope: Project,
+			want: nil,
+		},
+
+		// OpenCode
+		{
+			name: "OpenCode/global", agent: OpenCode,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".config", "opencode", "opencode.json")},
+		},
+		{
+			name: "OpenCode/project", agent: OpenCode,
+			plat: Platform{GOOS: "linux", WorkingDir: "/work"}, scope: Project,
+			want: []string{filepath.Join("/work", "opencode.json")},
+		},
+
+		// GitHub Copilot CLI (global only)
+		{
+			name: "GitHubCopilotCLI/global", agent: GitHubCopilotCLI,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".copilot", "mcp-config.json")},
+		},
+		{
+			name: "GitHubCopilotCLI/project=nil", agent: GitHubCopilotCLI,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"}, scope: Project,
+			want: nil,
 		},
 	}
 
@@ -629,7 +767,6 @@ func TestUninstallContinueMemFS(t *testing.T) {
 func TestResolve(t *testing.T) {
 	plat := Platform{GOOS: "linux", HomeDir: "/home/a", WorkingDir: "/proj"}
 	results := resolveWith(plat, []Agent{ClaudeCode, Cursor, VSCode})
-	// ClaudeCode and Cursor have global paths; VSCode does not
 	paths := map[Agent]string{}
 	for _, r := range results {
 		if r.OK() {
@@ -638,9 +775,7 @@ func TestResolve(t *testing.T) {
 	}
 	assertEqual(t, paths[ClaudeCode], filepath.Join("/home/a", ".claude.json"))
 	assertEqual(t, paths[Cursor], filepath.Join("/home/a", ".cursor", "mcp.json"))
-	if _, ok := paths[VSCode]; ok {
-		t.Error("VS Code should have no global path")
-	}
+	assertEqual(t, paths[VSCode], filepath.Join("/home/a", ".config", "Code", "User", "mcp.json"))
 }
 
 func TestResolveProject(t *testing.T) {

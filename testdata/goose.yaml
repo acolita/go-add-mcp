@@ -3,6 +3,9 @@ extensions:
         args:
             - mcp
         cmd: agend
+        description: ""
         enabled: true
+        envs: {}
         name: agend
+        timeout: 300
         type: stdio

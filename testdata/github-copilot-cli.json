@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "agend": {
+      "args": [
+        "mcp"
+      ],
+      "command": "agend",
+      "tools": [
+        "*"
+      ],
+      "type": "stdio"
+    }
+  }
+}

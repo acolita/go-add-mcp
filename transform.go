@@ -87,9 +87,21 @@ func transformZedInstall(m map[string]any, s Server) map[string]any {
 	}
 	cfg := serverConfig(s)
 	cfg["source"] = "custom"
+	if s.IsHTTP() {
+		cfg["type"] = remoteType(s)
+	}
 	servers[s.Name] = cfg
 	m["context_servers"] = servers
 	return m
+}
+
+// remoteType returns the transport subtype for a remote server.
+// Defaults to "http"; callers passing Transport="sse" get "sse".
+func remoteType(s Server) string {
+	if s.IsSSE() {
+		return "sse"
+	}
+	return "http"
 }
 
 // --- Amazon Q: standard mcpServers object format ---
@@ -105,28 +117,42 @@ func transformGooseInstall(m map[string]any, s Server) map[string]any {
 		extensions = make(map[string]any)
 	}
 	entry := map[string]any{
-		"name":    s.Name,
-		"enabled": true,
-		"type":    "stdio",
+		"name":        s.Name,
+		"description": "",
+		"enabled":     true,
+		"timeout":     300,
 	}
 	if s.IsHTTP() {
-		entry["type"] = "sse"
+		gooseType := "streamable_http"
+		if s.IsSSE() {
+			gooseType = "sse"
+		}
+		entry["type"] = gooseType
 		entry["uri"] = s.URL
-		if len(s.Headers) > 0 {
-			entry["headers"] = s.Headers
-		}
+		entry["headers"] = stringMapOrEmpty(s.Headers)
 	} else {
+		entry["type"] = "stdio"
 		entry["cmd"] = s.Command
-		if len(s.Args) > 0 {
-			entry["args"] = s.Args
-		}
-	}
-	if len(s.Env) > 0 {
-		entry["envs"] = s.Env
+		entry["args"] = stringSliceOrEmpty(s.Args)
+		entry["envs"] = stringMapOrEmpty(s.Env)
 	}
 	extensions[s.Name] = entry
 	m["extensions"] = extensions
 	return m
+}
+
+func stringMapOrEmpty(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
+}
+
+func stringSliceOrEmpty(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 func transformGooseUninstall(m map[string]any, name string) map[string]any {
@@ -148,6 +174,7 @@ func transformCodexInstall(m map[string]any, s Server) map[string]any {
 	}
 	entry := make(map[string]any)
 	if s.IsHTTP() {
+		entry["type"] = remoteType(s)
 		entry["url"] = s.URL
 		if len(s.Headers) > 0 {
 			entry["http_headers"] = s.Headers
@@ -184,6 +211,102 @@ func transformContinueInstall(_ map[string]any, s Server) map[string]any {
 			s.Name: serverConfig(s),
 		},
 	}
+}
+
+// --- Antigravity: {"mcpServers": {"name": {"serverUrl": "...", ...}}} ---
+// Remote uses `serverUrl` (not `url`). Stdio uses standard command/args/env.
+
+func transformAntigravityInstall(m map[string]any, s Server) map[string]any {
+	servers, _ := m["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = make(map[string]any)
+	}
+	var cfg map[string]any
+	if s.IsHTTP() {
+		cfg = map[string]any{"serverUrl": s.URL}
+		if len(s.Headers) > 0 {
+			cfg["headers"] = s.Headers
+		}
+	} else {
+		cfg = map[string]any{"command": s.Command}
+		if len(s.Args) > 0 {
+			cfg["args"] = s.Args
+		}
+		if len(s.Env) > 0 {
+			cfg["env"] = s.Env
+		}
+	}
+	servers[s.Name] = cfg
+	m["mcpServers"] = servers
+	return m
+}
+
+// --- OpenCode: {"mcp": {"name": {"type": "local"|"remote", ...}}} ---
+
+func transformOpenCodeInstall(m map[string]any, s Server) map[string]any {
+	servers, _ := m["mcp"].(map[string]any)
+	if servers == nil {
+		servers = make(map[string]any)
+	}
+	var cfg map[string]any
+	if s.IsHTTP() {
+		cfg = map[string]any{
+			"type":    "remote",
+			"url":     s.URL,
+			"enabled": true,
+		}
+		if len(s.Headers) > 0 {
+			cfg["headers"] = s.Headers
+		}
+	} else {
+		cmd := append([]string{s.Command}, s.Args...)
+		cfg = map[string]any{
+			"type":        "local",
+			"command":     cmd,
+			"enabled":     true,
+			"environment": stringMapOrEmpty(s.Env),
+		}
+	}
+	servers[s.Name] = cfg
+	m["mcp"] = servers
+	return m
+}
+
+// --- GitHub Copilot CLI (global ~/.copilot/mcp-config.json) ---
+// Uses `mcpServers` key. Each entry has a `type` field and a `tools: ["*"]` allowlist.
+// Project-scope Copilot shares VS Code's .vscode/mcp.json — use the VSCode agent for that.
+
+func transformCopilotInstall(m map[string]any, s Server) map[string]any {
+	servers, _ := m["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = make(map[string]any)
+	}
+	var cfg map[string]any
+	if s.IsHTTP() {
+		cfg = map[string]any{
+			"type":  remoteType(s),
+			"url":   s.URL,
+			"tools": []string{"*"},
+		}
+		if len(s.Headers) > 0 {
+			cfg["headers"] = s.Headers
+		}
+	} else {
+		cfg = map[string]any{
+			"type":    "stdio",
+			"command": s.Command,
+			"tools":   []string{"*"},
+		}
+		if len(s.Args) > 0 {
+			cfg["args"] = s.Args
+		}
+		if len(s.Env) > 0 {
+			cfg["env"] = s.Env
+		}
+	}
+	servers[s.Name] = cfg
+	m["mcpServers"] = servers
+	return m
 }
 
 // --- JSONC comment stripping ---

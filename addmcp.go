@@ -13,34 +13,41 @@ import "fmt"
 type Agent string
 
 const (
-	ClaudeCode    Agent = "claude-code"
-	ClaudeDesktop Agent = "claude-desktop"
-	Cursor        Agent = "cursor"
-	Windsurf      Agent = "windsurf"
-	VSCode        Agent = "vscode"
-	Zed           Agent = "zed"
-	JetBrains     Agent = "jetbrains"
-	Cline         Agent = "cline"
-	RooCode       Agent = "roo-code"
-	Gemini        Agent = "gemini"
-	AmazonQ       Agent = "amazon-q"
-	Codex         Agent = "codex"
-	Goose         Agent = "goose"
-	Continue      Agent = "continue"
+	ClaudeCode       Agent = "claude-code"
+	ClaudeDesktop    Agent = "claude-desktop"
+	Cursor           Agent = "cursor"
+	Windsurf         Agent = "windsurf"
+	VSCode           Agent = "vscode"
+	Zed              Agent = "zed"
+	JetBrains        Agent = "jetbrains"
+	Cline            Agent = "cline"
+	RooCode          Agent = "roo-code"
+	Gemini           Agent = "gemini"
+	AmazonQ          Agent = "amazon-q"
+	Codex            Agent = "codex"
+	Goose            Agent = "goose"
+	Continue         Agent = "continue"
+	Antigravity      Agent = "antigravity"
+	OpenCode         Agent = "opencode"
+	GitHubCopilotCLI Agent = "github-copilot-cli"
 )
 
 // Server describes an MCP server to install into agent configs.
 type Server struct {
-	Name    string            // Server name (key in config objects, filename for Continue)
-	Command string            // Executable path or name (stdio transport)
-	Args    []string          // Command arguments (stdio transport)
-	Env     map[string]string // Environment variables
-	URL     string            // Server endpoint (HTTP/SSE transport; if set, Command/Args are ignored)
-	Headers map[string]string // HTTP headers (HTTP/SSE transport)
+	Name      string            // Server name (key in config objects, filename for Continue)
+	Command   string            // Executable path or name (stdio transport)
+	Args      []string          // Command arguments (stdio transport)
+	Env       map[string]string // Environment variables
+	URL       string            // Server endpoint (HTTP/SSE transport; if set, Command/Args are ignored)
+	Headers   map[string]string // HTTP headers (HTTP/SSE transport)
+	Transport string            // "http" (default) or "sse"; only relevant when URL is set
 }
 
 // IsHTTP returns true if the server uses HTTP/SSE transport.
 func (s Server) IsHTTP() bool { return s.URL != "" }
+
+// IsSSE returns true if the server explicitly uses SSE transport.
+func (s Server) IsSSE() bool { return s.Transport == "sse" }
 
 // Scope controls whether to install globally or per-project.
 type Scope int
@@ -113,6 +120,7 @@ var allAgents = []Agent{
 	ClaudeCode, ClaudeDesktop, Cursor, Windsurf, VSCode,
 	Zed, JetBrains, Cline, RooCode, Gemini,
 	AmazonQ, Codex, Goose, Continue,
+	Antigravity, OpenCode, GitHubCopilotCLI,
 }
 
 // --- internal wiring (testable via injected FS/Platform/Detector) ---

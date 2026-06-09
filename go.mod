@@ -1,4 +1,4 @@
-module github.com/agend-sh/go-add-mcp
+module github.com/acolita/go-add-mcp
 
 go 1.23
 

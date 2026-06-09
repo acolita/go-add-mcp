@@ -110,9 +110,15 @@ var registry = map[Agent]agentDef{
 			if o.scope == Project {
 				return []string{filepath.Join(projectDir(p, o), ".vscode", "mcp.json")}
 			}
-			return nil // global MCP config managed via Command Palette
+			if dir := vsCodeUserDir(p); dir != "" {
+				return []string{filepath.Join(dir, "mcp.json")}
+			}
+			return nil
 		},
-		detect: func(_ Platform, d Detector) bool {
+		detect: func(p Platform, d Detector) bool {
+			if dir := vsCodeUserDir(p); dir != "" && d.DirExists(dir) {
+				return true
+			}
 			return d.CommandExists("code")
 		},
 		format:             formatJSON,
@@ -125,18 +131,16 @@ var registry = map[Agent]agentDef{
 			if o.scope == Project {
 				return []string{filepath.Join(projectDir(p, o), ".zed", "settings.json")}
 			}
-			switch p.GOOS {
-			case "darwin", "linux":
-				return []string{filepath.Join(p.HomeDir, ".config", "zed", "settings.json")}
-			case "windows":
-				if p.AppData != "" {
-					return []string{filepath.Join(p.AppData, "Zed", "settings.json")}
-				}
+			if dir := zedConfigDir(p); dir != "" {
+				return []string{filepath.Join(dir, "settings.json")}
 			}
 			return nil
 		},
 		detect: func(p Platform, d Detector) bool {
-			return d.DirExists(filepath.Join(p.HomeDir, ".config", "zed")) || d.CommandExists("zed")
+			if dir := zedConfigDir(p); dir != "" && d.DirExists(dir) {
+				return true
+			}
+			return d.CommandExists("zed")
 		},
 		format:             formatJSON,
 		installTransform:   transformZedInstall,
@@ -233,10 +237,10 @@ var registry = map[Agent]agentDef{
 			if o.scope == Project {
 				return []string{filepath.Join(projectDir(p, o), ".codex", "config.toml")}
 			}
-			return []string{filepath.Join(p.HomeDir, ".codex", "config.toml")}
+			return []string{filepath.Join(codexHome(p), "config.toml")}
 		},
-		detect: func(_ Platform, d Detector) bool {
-			return d.CommandExists("codex")
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(codexHome(p)) || d.CommandExists("codex")
 		},
 		format:             formatTOML,
 		installTransform:   transformCodexInstall,
@@ -248,7 +252,7 @@ var registry = map[Agent]agentDef{
 			if o.scope == Project {
 				return []string{filepath.Join(projectDir(p, o), ".goose", "config.yaml")}
 			}
-			return []string{filepath.Join(p.HomeDir, ".config", "goose", "config.yaml")}
+			return []string{gooseGlobalPath(p)}
 		},
 		detect: func(_ Platform, d Detector) bool {
 			return d.CommandExists("goose")
@@ -272,23 +276,120 @@ var registry = map[Agent]agentDef{
 		installTransform:   transformContinueInstall,
 		uninstallTransform: nil, // handled directly in doUninstall
 	},
+
+	Antigravity: {
+		paths: func(p Platform, o *options) []string {
+			if o.scope == Project {
+				return nil
+			}
+			return []string{filepath.Join(p.HomeDir, ".gemini", "antigravity", "mcp_config.json")}
+		},
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(filepath.Join(p.HomeDir, ".gemini"))
+		},
+		format:             formatJSON,
+		installTransform:   transformAntigravityInstall,
+		uninstallTransform: transformStdUninstall("mcpServers"),
+	},
+
+	OpenCode: {
+		paths: func(p Platform, o *options) []string {
+			if o.scope == Project {
+				return []string{filepath.Join(projectDir(p, o), "opencode.json")}
+			}
+			return []string{filepath.Join(xdgConfigHome(p), "opencode", "opencode.json")}
+		},
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(filepath.Join(xdgConfigHome(p), "opencode"))
+		},
+		format:             formatJSON,
+		installTransform:   transformOpenCodeInstall,
+		uninstallTransform: transformStdUninstall("mcp"),
+	},
+
+	GitHubCopilotCLI: {
+		paths: func(p Platform, o *options) []string {
+			if o.scope == Project {
+				return nil
+			}
+			return []string{filepath.Join(p.HomeDir, ".copilot", "mcp-config.json")}
+		},
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(filepath.Join(p.HomeDir, ".copilot")) || d.CommandExists("copilot")
+		},
+		format:             formatJSON,
+		installTransform:   transformCopilotInstall,
+		uninstallTransform: transformStdUninstall("mcpServers"),
+	},
 }
 
 // --- helpers ---
 
 func vsCodeExtPaths(p Platform, extensionID, filename string) []string {
-	rel := filepath.Join("Code", "User", "globalStorage", extensionID, "settings", filename)
+	dir := vsCodeUserDir(p)
+	if dir == "" {
+		return nil
+	}
+	return []string{filepath.Join(dir, "globalStorage", extensionID, "settings", filename)}
+}
+
+// vsCodeUserDir is the platform-specific "Code/User" directory containing
+// mcp.json (global) and globalStorage subtree (per-extension configs).
+func vsCodeUserDir(p Platform) string {
 	switch p.GOOS {
 	case "darwin":
-		return []string{filepath.Join(p.HomeDir, "Library", "Application Support", rel)}
+		return filepath.Join(p.HomeDir, "Library", "Application Support", "Code", "User")
 	case "linux":
-		return []string{filepath.Join(p.HomeDir, ".config", rel)}
+		return filepath.Join(xdgConfigHome(p), "Code", "User")
 	case "windows":
 		if p.AppData != "" {
-			return []string{filepath.Join(p.AppData, rel)}
+			return filepath.Join(p.AppData, "Code", "User")
 		}
 	}
-	return nil
+	return ""
+}
+
+// zedConfigDir is the directory containing Zed's settings.json (global scope).
+// Upstream packages darwin and windows under "Zed"; linux uses lowercase "zed".
+func zedConfigDir(p Platform) string {
+	switch p.GOOS {
+	case "darwin":
+		return filepath.Join(p.HomeDir, "Library", "Application Support", "Zed")
+	case "linux":
+		return filepath.Join(xdgConfigHome(p), "zed")
+	case "windows":
+		if p.AppData != "" {
+			return filepath.Join(p.AppData, "Zed")
+		}
+	}
+	return ""
+}
+
+func codexHome(p Platform) string {
+	if p.CodexHome != "" {
+		return p.CodexHome
+	}
+	return filepath.Join(p.HomeDir, ".codex")
+}
+
+func gooseGlobalPath(p Platform) string {
+	switch p.GOOS {
+	case "windows":
+		if p.AppData != "" {
+			return filepath.Join(p.AppData, "Block", "goose", "config", "config.yaml")
+		}
+		return filepath.Join(p.HomeDir, ".config", "goose", "config.yaml")
+	default:
+		return filepath.Join(xdgConfigHome(p), "goose", "config.yaml")
+	}
+}
+
+// xdgConfigHome returns $XDG_CONFIG_HOME on Linux/macOS fallback, or ~/.config.
+func xdgConfigHome(p Platform) string {
+	if p.XDGConfigHome != "" {
+		return p.XDGConfigHome
+	}
+	return filepath.Join(p.HomeDir, ".config")
 }
 
 func projectDir(p Platform, o *options) string {

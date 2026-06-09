@@ -17,7 +17,7 @@ of JSON files) with the correct config key (`mcpServers`, `servers`,
 ## Install
 
 ```sh
-go get github.com/agend-sh/go-add-mcp
+go get github.com/acolita/go-add-mcp
 ```
 
 ## Usage
@@ -28,7 +28,7 @@ package main
 import (
     "fmt"
 
-    addmcp "github.com/agend-sh/go-add-mcp"
+    addmcp "github.com/acolita/go-add-mcp"
 )
 
 func main() {

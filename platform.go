@@ -11,10 +11,12 @@ import (
 // Platform captures environment-dependent values, enabling pure path resolution
 // and detection logic that can be tested across platforms from any OS.
 type Platform struct {
-	GOOS       string // runtime.GOOS
-	HomeDir    string // os.UserHomeDir()
-	AppData    string // %APPDATA% on Windows, empty elsewhere
-	WorkingDir string // os.Getwd() fallback for project scope
+	GOOS          string // runtime.GOOS
+	HomeDir       string // os.UserHomeDir()
+	AppData       string // %APPDATA% on Windows, empty elsewhere
+	WorkingDir    string // os.Getwd() fallback for project scope
+	XDGConfigHome string // $XDG_CONFIG_HOME (Linux); empty falls back to ~/.config
+	CodexHome     string // $CODEX_HOME; empty falls back to ~/.codex
 }
 
 // DefaultPlatform reads the real environment.
@@ -22,10 +24,12 @@ func DefaultPlatform() Platform {
 	home, _ := os.UserHomeDir()
 	wd, _ := os.Getwd()
 	return Platform{
-		GOOS:       runtime.GOOS,
-		HomeDir:    home,
-		AppData:    os.Getenv("APPDATA"),
-		WorkingDir: wd,
+		GOOS:          runtime.GOOS,
+		HomeDir:       home,
+		AppData:       os.Getenv("APPDATA"),
+		WorkingDir:    wd,
+		XDGConfigHome: os.Getenv("XDG_CONFIG_HOME"),
+		CodexHome:     os.Getenv("CODEX_HOME"),
 	}
 }
 
