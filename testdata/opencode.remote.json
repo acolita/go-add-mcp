@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "agend": {
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer xxx"
+      },
+      "type": "remote",
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}

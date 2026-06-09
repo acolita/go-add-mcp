@@ -1,0 +1,7 @@
+[mcp_servers]
+[mcp_servers.agend]
+type = 'http'
+url = 'https://mcp.example.com/mcp'
+
+[mcp_servers.agend.http_headers]
+Authorization = 'Bearer xxx'

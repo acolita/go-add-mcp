@@ -17,6 +17,7 @@ type Platform struct {
 	WorkingDir    string // os.Getwd() fallback for project scope
 	XDGConfigHome string // $XDG_CONFIG_HOME (Linux); empty falls back to ~/.config
 	CodexHome     string // $CODEX_HOME; empty falls back to ~/.codex
+	ClineDir      string // $CLINE_DIR; empty falls back to ~/.cline (Cline CLI)
 }
 
 // DefaultPlatform reads the real environment.
@@ -30,6 +31,7 @@ func DefaultPlatform() Platform {
 		WorkingDir:    wd,
 		XDGConfigHome: os.Getenv("XDG_CONFIG_HOME"),
 		CodexHome:     os.Getenv("CODEX_HOME"),
+		ClineDir:      os.Getenv("CLINE_DIR"),
 	}
 }
 

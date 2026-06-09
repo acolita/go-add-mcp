@@ -22,6 +22,7 @@ type agentDef struct {
 	format             format
 	installTransform   func(map[string]any, Server) map[string]any
 	uninstallTransform func(map[string]any, string) map[string]any // nil for Continue
+	stdioOnly          bool                                        // reject HTTP/SSE installs (e.g. Claude Desktop)
 }
 
 var registry = map[Agent]agentDef{
@@ -58,6 +59,7 @@ var registry = map[Agent]agentDef{
 		format:             formatJSON,
 		installTransform:   transformStdInstall("mcpServers"),
 		uninstallTransform: transformStdUninstall("mcpServers"),
+		stdioOnly:          true, // remote servers must be added through the Claude Desktop app
 	},
 
 	ClaudeCode: {
@@ -101,7 +103,7 @@ var registry = map[Agent]agentDef{
 			return d.DirExists(filepath.Join(p.HomeDir, ".codeium", "windsurf"))
 		},
 		format:             formatJSON,
-		installTransform:   transformStdInstall("mcpServers"),
+		installTransform:   transformAntigravityInstall, // remote uses `serverUrl`, like Antigravity
 		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
@@ -178,7 +180,22 @@ var registry = map[Agent]agentDef{
 			return false
 		},
 		format:             formatJSON,
-		installTransform:   transformStdInstall("mcpServers"),
+		installTransform:   transformClineInstall,
+		uninstallTransform: transformStdUninstall("mcpServers"),
+	},
+
+	ClineCLI: {
+		paths: func(p Platform, o *options) []string {
+			if o.scope == Project {
+				return nil
+			}
+			return []string{filepath.Join(clineCLIHome(p), "data", "settings", "cline_mcp_settings.json")}
+		},
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(clineCLIHome(p))
+		},
+		format:             formatJSON,
+		installTransform:   transformClineInstall,
 		uninstallTransform: transformStdUninstall("mcpServers"),
 	},
 
@@ -307,6 +324,21 @@ var registry = map[Agent]agentDef{
 		uninstallTransform: transformStdUninstall("mcp"),
 	},
 
+	MCPorter: {
+		paths: func(p Platform, o *options) []string {
+			if o.scope == Project {
+				return []string{filepath.Join(projectDir(p, o), "config", "mcporter.json")}
+			}
+			return []string{filepath.Join(p.HomeDir, ".mcporter", "mcporter.json")}
+		},
+		detect: func(p Platform, d Detector) bool {
+			return d.DirExists(filepath.Join(p.HomeDir, ".mcporter"))
+		},
+		format:             formatJSON,
+		installTransform:   transformStdInstall("mcpServers"),
+		uninstallTransform: transformStdUninstall("mcpServers"),
+	},
+
 	GitHubCopilotCLI: {
 		paths: func(p Platform, o *options) []string {
 			if o.scope == Project {
@@ -370,6 +402,14 @@ func codexHome(p Platform) string {
 		return p.CodexHome
 	}
 	return filepath.Join(p.HomeDir, ".codex")
+}
+
+// clineCLIHome returns the Cline CLI base directory ($CLINE_DIR or ~/.cline).
+func clineCLIHome(p Platform) string {
+	if p.ClineDir != "" {
+		return p.ClineDir
+	}
+	return filepath.Join(p.HomeDir, ".cline")
 }
 
 func gooseGlobalPath(p Platform) string {

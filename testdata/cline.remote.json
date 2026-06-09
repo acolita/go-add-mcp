@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "agend": {
+      "disabled": false,
+      "headers": {
+        "Authorization": "Bearer xxx"
+      },
+      "type": "streamableHttp",
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "context_servers": {
+    "agend": {
+      "headers": {
+        "Authorization": "Bearer xxx"
+      },
+      "source": "custom",
+      "type": "http",
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}

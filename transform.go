@@ -60,6 +60,45 @@ func transformStdUninstall(key string) func(map[string]any, string) map[string]a
 	}
 }
 
+// --- Cline: {"mcpServers": {"name": {..., "disabled": false}}} ---
+// Both the VS Code extension and the Cline CLI use this shape. Local entries
+// always carry `args` and `disabled`; remote entries use a `type` of
+// "streamableHttp" (or "sse") plus `disabled`.
+
+func transformClineInstall(m map[string]any, s Server) map[string]any {
+	servers, _ := m["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = make(map[string]any)
+	}
+	var cfg map[string]any
+	if s.IsHTTP() {
+		clineType := "streamableHttp"
+		if s.IsSSE() {
+			clineType = "sse"
+		}
+		cfg = map[string]any{
+			"url":      s.URL,
+			"type":     clineType,
+			"disabled": false,
+		}
+		if len(s.Headers) > 0 {
+			cfg["headers"] = s.Headers
+		}
+	} else {
+		cfg = map[string]any{
+			"command":  s.Command,
+			"args":     stringSliceOrEmpty(s.Args),
+			"disabled": false,
+		}
+		if len(s.Env) > 0 {
+			cfg["env"] = s.Env
+		}
+	}
+	servers[s.Name] = cfg
+	m["mcpServers"] = servers
+	return m
+}
+
 // --- VS Code: {"servers": {"name": {"type": "stdio", ...}}} ---
 
 func transformVSCodeInstall(m map[string]any, s Server) map[string]any {
@@ -184,9 +223,9 @@ func transformCodexInstall(m map[string]any, s Server) map[string]any {
 		if len(s.Args) > 0 {
 			entry["args"] = s.Args
 		}
-	}
-	if len(s.Env) > 0 {
-		entry["env"] = s.Env
+		if len(s.Env) > 0 {
+			entry["env"] = s.Env
+		}
 	}
 	servers[s.Name] = entry
 	m["mcp_servers"] = servers

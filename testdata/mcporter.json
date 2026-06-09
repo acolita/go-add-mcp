@@ -4,8 +4,7 @@
       "args": [
         "mcp"
       ],
-      "command": "agend",
-      "disabled": false
+      "command": "agend"
     }
   }
 }

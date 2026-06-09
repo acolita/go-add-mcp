@@ -20,59 +20,83 @@ var update = flag.Bool("update", false, "update golden files")
 //
 //	go test -run TestGoldenFiles -update
 func TestGoldenFiles(t *testing.T) {
-	server := Server{
+	stdioServer := Server{
 		Name:    "agend",
 		Command: "agend",
 		Args:    []string{"mcp"},
 	}
+	remoteServer := Server{
+		Name:    "agend",
+		URL:     "https://mcp.example.com/mcp",
+		Headers: map[string]string{"Authorization": "Bearer xxx"},
+	}
 
+	// stdioFile is the golden for a local (stdio) install; remoteFile is the
+	// golden for an HTTP (remote) install. An empty remoteFile means the agent
+	// rejects remote servers (stdioOnly) and only the stdio golden applies.
 	tests := []struct {
-		agent Agent
-		file  string // golden filename
+		agent      Agent
+		stdioFile  string
+		remoteFile string
 	}{
-		{ClaudeDesktop, "claude-desktop.json"},
-		{ClaudeCode, "claude-code.json"},
-		{Cursor, "cursor.json"},
-		{Windsurf, "windsurf.json"},
-		{VSCode, "vscode.json"},
-		{Zed, "zed.json"},
-		{JetBrains, "jetbrains.json"},
-		{Cline, "cline.json"},
-		{RooCode, "roo-code.json"},
-		{Gemini, "gemini.json"},
-		{AmazonQ, "amazon-q.json"},
-		{Codex, "codex.toml"},
-		{Goose, "goose.yaml"},
-		{Continue, "continue.json"},
-		{Antigravity, "antigravity.json"},
-		{OpenCode, "opencode.json"},
-		{GitHubCopilotCLI, "github-copilot-cli.json"},
+		{ClaudeDesktop, "claude-desktop.json", ""},
+		{ClaudeCode, "claude-code.json", "claude-code.remote.json"},
+		{Cursor, "cursor.json", "cursor.remote.json"},
+		{Windsurf, "windsurf.json", "windsurf.remote.json"},
+		{VSCode, "vscode.json", "vscode.remote.json"},
+		{Zed, "zed.json", "zed.remote.json"},
+		{JetBrains, "jetbrains.json", "jetbrains.remote.json"},
+		{Cline, "cline.json", "cline.remote.json"},
+		{ClineCLI, "cline-cli.json", "cline-cli.remote.json"},
+		{RooCode, "roo-code.json", "roo-code.remote.json"},
+		{Gemini, "gemini.json", "gemini.remote.json"},
+		{AmazonQ, "amazon-q.json", "amazon-q.remote.json"},
+		{Codex, "codex.toml", "codex.remote.toml"},
+		{Goose, "goose.yaml", "goose.remote.yaml"},
+		{Continue, "continue.json", "continue.remote.json"},
+		{Antigravity, "antigravity.json", "antigravity.remote.json"},
+		{OpenCode, "opencode.json", "opencode.remote.json"},
+		{MCPorter, "mcporter.json", "mcporter.remote.json"},
+		{GitHubCopilotCLI, "github-copilot-cli.json", "github-copilot-cli.remote.json"},
 	}
 
 	for _, tt := range tests {
+		def := registry[tt.agent]
 		t.Run(string(tt.agent), func(t *testing.T) {
-			def := registry[tt.agent]
-			got := generateOutput(t, def, server)
-			goldenPath := filepath.Join("testdata", tt.file)
-
-			if *update {
-				os.MkdirAll("testdata", 0755)
-				if err := os.WriteFile(goldenPath, got, 0644); err != nil {
-					t.Fatal(err)
-				}
-				t.Logf("updated %s", goldenPath)
-				return
-			}
-
-			want, err := os.ReadFile(goldenPath)
-			if err != nil {
-				t.Fatalf("golden file missing (run with -update to create): %v", err)
-			}
-			if string(got) != string(want) {
-				t.Errorf("output differs from golden file %s\n\ngot:\n%s\nwant:\n%s",
-					goldenPath, got, want)
-			}
+			checkGolden(t, def, stdioServer, tt.stdioFile)
 		})
+		if tt.remoteFile == "" {
+			continue
+		}
+		t.Run(string(tt.agent)+"/remote", func(t *testing.T) {
+			checkGolden(t, def, remoteServer, tt.remoteFile)
+		})
+	}
+}
+
+// checkGolden generates the agent's output for the given server and compares it
+// to (or, with -update, writes) the named golden file under testdata/.
+func checkGolden(t *testing.T, def agentDef, server Server, file string) {
+	t.Helper()
+	got := generateOutput(t, def, server)
+	goldenPath := filepath.Join("testdata", file)
+
+	if *update {
+		os.MkdirAll("testdata", 0755)
+		if err := os.WriteFile(goldenPath, got, 0644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("updated %s", goldenPath)
+		return
+	}
+
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("golden file missing (run with -update to create): %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("output differs from golden file %s\n\ngot:\n%s\nwant:\n%s",
+			goldenPath, got, want)
 	}
 }
 

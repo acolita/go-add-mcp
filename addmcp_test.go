@@ -220,6 +220,33 @@ func TestTransformAntigravityHTTP(t *testing.T) {
 	}
 }
 
+func TestTransformCline(t *testing.T) {
+	m := transformClineInstall(map[string]any{}, testServer)
+	entry := m["mcpServers"].(map[string]any)["agend"].(map[string]any)
+	assertEqual(t, entry["command"], "agend")
+	assertEqual(t, entry["disabled"], false)
+	if _, ok := entry["args"]; !ok {
+		t.Error("cline local config should always include args")
+	}
+}
+
+func TestTransformClineHTTP(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/mcp", Headers: map[string]string{"Auth": "tok"}}
+	m := transformClineInstall(map[string]any{}, s)
+	entry := m["mcpServers"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["url"], "https://x.com/mcp")
+	assertEqual(t, entry["type"], "streamableHttp")
+	assertEqual(t, entry["disabled"], false)
+	assertEqual(t, entry["headers"].(map[string]string)["Auth"], "tok")
+}
+
+func TestTransformClineHTTPSSE(t *testing.T) {
+	s := Server{Name: "r", URL: "https://x.com/sse", Transport: "sse"}
+	m := transformClineInstall(map[string]any{}, s)
+	entry := m["mcpServers"].(map[string]any)["r"].(map[string]any)
+	assertEqual(t, entry["type"], "sse")
+}
+
 func TestTransformOpenCode(t *testing.T) {
 	m := transformOpenCodeInstall(map[string]any{}, testServer)
 	entry := m["mcp"].(map[string]any)["agend"].(map[string]any)
@@ -276,12 +303,15 @@ func TestTransformGooseUninstallEmpty(t *testing.T) {
 // --- Codex HTTP + env + nil coverage ---
 
 func TestTransformCodexHTTP(t *testing.T) {
+	// env is stdio-only: a remote Codex server must not carry an `env` key.
 	s := Server{Name: "r", URL: "https://x.com/mcp", Headers: map[string]string{"Auth": "tok"}, Env: map[string]string{"K": "V"}}
 	m := transformCodexInstall(map[string]any{}, s)
 	entry := m["mcp_servers"].(map[string]any)["r"].(map[string]any)
 	assertEqual(t, entry["url"], "https://x.com/mcp")
 	assertEqual(t, entry["http_headers"].(map[string]string)["Auth"], "tok")
-	assertEqual(t, entry["env"].(map[string]string)["K"], "V")
+	if _, ok := entry["env"]; ok {
+		t.Errorf("remote Codex server should not include env, got %v", entry["env"])
+	}
 }
 
 func TestTransformCodexInstallWithEnv(t *testing.T) {
@@ -540,6 +570,35 @@ func TestPaths(t *testing.T) {
 			plat: Platform{GOOS: "linux", HomeDir: "/home/a"}, scope: Project,
 			want: nil,
 		},
+
+		// Cline CLI (global only)
+		{
+			name: "ClineCLI/global", agent: ClineCLI,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".cline", "data", "settings", "cline_mcp_settings.json")},
+		},
+		{
+			name: "ClineCLI/CLINE_DIR override", agent: ClineCLI,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a", ClineDir: "/custom/cline"},
+			want: []string{filepath.Join("/custom/cline", "data", "settings", "cline_mcp_settings.json")},
+		},
+		{
+			name: "ClineCLI/project=nil", agent: ClineCLI,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"}, scope: Project,
+			want: nil,
+		},
+
+		// MCPorter
+		{
+			name: "MCPorter/global", agent: MCPorter,
+			plat: Platform{GOOS: "linux", HomeDir: "/home/a"},
+			want: []string{filepath.Join("/home/a", ".mcporter", "mcporter.json")},
+		},
+		{
+			name: "MCPorter/project", agent: MCPorter,
+			plat: Platform{GOOS: "linux", WorkingDir: "/work"}, scope: Project,
+			want: []string{filepath.Join("/work", "config", "mcporter.json")},
+		},
 	}
 
 	for _, tt := range tests {
@@ -793,6 +852,33 @@ func TestInstallUnknownAgent(t *testing.T) {
 	results := installWith(fsys, plat, testServer, []Agent{"nonexistent"})
 	if len(results) != 1 || results[0].Err == nil {
 		t.Fatal("expected error for unknown agent")
+	}
+}
+
+func TestInstallClaudeDesktopRejectsRemote(t *testing.T) {
+	fsys := newMemFS()
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+	remote := Server{Name: "agend", URL: "https://mcp.example.com/mcp"}
+
+	results := installWith(fsys, plat, remote, []Agent{ClaudeDesktop})
+	if len(results) != 1 || results[0].Err == nil {
+		t.Fatal("expected error installing a remote server to claude-desktop")
+	}
+	if results[0].Path != "" {
+		t.Errorf("expected no path written, got %q", results[0].Path)
+	}
+	if len(fsys.files) != 0 {
+		t.Errorf("expected no config file written, got %v", fsys.files)
+	}
+}
+
+func TestInstallClaudeDesktopAllowsStdio(t *testing.T) {
+	fsys := newMemFS()
+	plat := Platform{GOOS: "linux", HomeDir: "/home/a"}
+
+	results := installWith(fsys, plat, testServer, []Agent{ClaudeDesktop})
+	if len(results) != 1 || !results[0].OK() {
+		t.Fatalf("expected stdio install to succeed, got %v", results)
 	}
 }
 

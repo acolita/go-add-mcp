@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "agend": {
+      "headers": {
+        "Authorization": "Bearer xxx"
+      },
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}

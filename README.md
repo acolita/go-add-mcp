@@ -8,11 +8,17 @@ Inspired by [neondatabase/add-mcp](https://github.com/neondatabase/add-mcp).
 ## Supported agents
 
 Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Zed, JetBrains (Junie),
-Cline, Roo Code, Gemini CLI, Amazon Q, Codex, Goose, Continue.
+Cline (VS Code extension), Cline CLI, Roo Code, Gemini CLI, Amazon Q, Codex,
+Goose, Continue, Antigravity, OpenCode, MCPorter, GitHub Copilot CLI.
 
 Each agent is handled in its native format (JSON, TOML, YAML, or a directory
 of JSON files) with the correct config key (`mcpServers`, `servers`,
-`context_servers`, `mcp_servers`, …).
+`context_servers`, `mcp_servers`, …) and per-agent transport quirks (e.g.
+Windsurf/Antigravity use `serverUrl`, Cline adds `disabled`/`type`).
+
+Claude Desktop only accepts stdio (local) servers via its config file —
+installing a remote (`URL`) server to it returns an error, since remotes must
+be added through the app.
 
 ## Install
 
@@ -99,7 +105,7 @@ Pure config transformation is separated from filesystem IO:
 - `registry.go` — per-agent paths, detection, format, and transform wiring
 - `platform.go` — injected OS/env for testability
 
-Golden-file tests cover all 14 agents.
+Golden-file tests cover all 19 agents, for both stdio and remote transports.
 
 ## License
 

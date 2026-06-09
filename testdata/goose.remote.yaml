@@ -1,0 +1,10 @@
+extensions:
+    agend:
+        description: ""
+        enabled: true
+        headers:
+            Authorization: Bearer xxx
+        name: agend
+        timeout: 300
+        type: streamable_http
+        uri: https://mcp.example.com/mcp

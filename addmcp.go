@@ -21,6 +21,7 @@ const (
 	Zed              Agent = "zed"
 	JetBrains        Agent = "jetbrains"
 	Cline            Agent = "cline"
+	ClineCLI         Agent = "cline-cli"
 	RooCode          Agent = "roo-code"
 	Gemini           Agent = "gemini"
 	AmazonQ          Agent = "amazon-q"
@@ -29,6 +30,7 @@ const (
 	Continue         Agent = "continue"
 	Antigravity      Agent = "antigravity"
 	OpenCode         Agent = "opencode"
+	MCPorter         Agent = "mcporter"
 	GitHubCopilotCLI Agent = "github-copilot-cli"
 )
 
@@ -118,9 +120,9 @@ func Agents() []Agent {
 // allAgents defines the canonical order.
 var allAgents = []Agent{
 	ClaudeCode, ClaudeDesktop, Cursor, Windsurf, VSCode,
-	Zed, JetBrains, Cline, RooCode, Gemini,
+	Zed, JetBrains, Cline, ClineCLI, RooCode, Gemini,
 	AmazonQ, Codex, Goose, Continue,
-	Antigravity, OpenCode, GitHubCopilotCLI,
+	Antigravity, OpenCode, MCPorter, GitHubCopilotCLI,
 }
 
 // --- internal wiring (testable via injected FS/Platform/Detector) ---
@@ -132,6 +134,13 @@ func installWith(fsys FS, plat Platform, server Server, agents []Agent, opts ...
 		def, ok := registry[agent]
 		if !ok {
 			results = append(results, Result{Agent: agent, Err: fmt.Errorf("unknown agent: %s", agent)})
+			continue
+		}
+		if server.IsHTTP() && def.stdioOnly {
+			results = append(results, Result{
+				Agent: agent,
+				Err:   fmt.Errorf("%s only supports stdio (local) servers via its config file; add remote servers through the app instead", agent),
+			})
 			continue
 		}
 		paths := def.paths(plat, o)
