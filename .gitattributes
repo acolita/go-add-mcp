@@ -1,0 +1,8 @@
+# Golden files are compared byte-for-byte in tests; force LF on every platform
+# so the Windows CI runner's autocrlf checkout doesn't turn \n into \r\n.
+testdata/** text eol=lf
+
+# Keep Go sources and other text normalized to LF as well.
+*.go text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
