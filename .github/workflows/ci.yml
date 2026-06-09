@@ -10,6 +10,11 @@ jobs:
   test:
     name: test (go ${{ matrix.go }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Use bash everywhere (incl. Windows runners) so flags like
+    # -coverprofile=coverage.out aren't mangled by PowerShell's argument parser.
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
